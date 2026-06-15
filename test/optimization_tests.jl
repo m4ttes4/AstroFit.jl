@@ -119,3 +119,45 @@ end
     map_fit = withparams(prior_cm, solve(OptimizationProblem(prior_cm, x, y, err), LBFGS()).u)
     @test map_fit.g.amplitude > 5.0
 end
+
+@testitem "Optimization extension: 2D fit with tuple coordinates" tags=[:optimization, :extension] begin
+    using AstroFit
+    using Optimization, OptimizationOptimJL
+    using Optimization.SciMLBase: successful_retcode
+
+    truth = @model begin
+        g = Gaussian2D(amplitude=5.0, x0=0.5, y0=-0.3, sigma_x=1.0, sigma_y=0.7, theta=0.0)
+        g
+    end
+    coord = collect(-3.0:0.3:3.0)
+    X = [x for x in coord, y in coord]
+    Y = [y for x in coord, y in coord]
+    data = render(truth, X, Y)                # noise-free: minimum sits at truth
+    err  = fill(0.05, size(data))
+
+    cm = @model begin
+        g = Gaussian2D(amplitude=1.0, x0=0.0, y0=0.0, sigma_x=1.5, sigma_y=1.5, theta=0.0)
+        g
+    end
+    cm = @constrain cm begin
+        @bound g.amplitude in (0.0, Inf)
+        @fix   g.theta     = 0.0           # avoid the theta/σx-σy degeneracy
+        @bound g.sigma_x   in (0.1, 5.0)
+        @bound g.sigma_y   in (0.1, 5.0)
+    end
+
+    # unweighted-branch plumbing: objective renders with both coordinates
+    optf = OptimizationFunction(cm, (X, Y), data)
+    @test optf.f(paramvector(cm), nothing) == sum(abs2, render(cm, X, Y) .- data)
+
+    prob = OptimizationProblem(cm, (X, Y), data, err)
+    sol  = solve(prob, Fminbox(LBFGS()))
+    @test successful_retcode(sol)
+
+    fit = withparams(cm, sol.u)
+    @test fit.g.amplitude ≈ 5.0 atol=1e-2
+    @test fit.g.x0        ≈ 0.5 atol=1e-2
+    @test fit.g.y0        ≈ -0.3 atol=1e-2
+    @test fit.g.sigma_x   ≈ 1.0 atol=1e-2
+    @test fit.g.sigma_y   ≈ 0.7 atol=1e-2
+end

@@ -9,9 +9,11 @@ using ForwardDiff
 # Pick the loss form once, at problem-build time, so the closure handed to
 # Optimization is monomorphic: the solve loop stays type-stable and the
 # ForwardDiff Duals flow cleanly through `withparams` (see project.md §3.4).
+# `x` is the independent variable: a single array (1D) or a tuple of arrays
+# (ND, e.g. (X, Y) for an image) — splatted into `render` via `_coords`.
 function _objective(cm, x, y, err)
     if err === nothing
-        return u -> sum(abs2, render(withparams(cm, u), x) .- y)   # unweighted LSQ
+        return u -> sum(abs2, render(withparams(cm, u), AstroFit._coords(x)...) .- y)  # unweighted LSQ
     elseif isempty(getfield(cm, :priors))
         return u -> -AstroFit.loglikelihood(cm, u, x, y, err)       # MLE
     else

@@ -319,8 +319,9 @@ end
 
     g1 = Gaussian1D(amplitude=2.0, sigma=1.0)
     g2 = Gaussian1D(amplitude=1.0, sigma=2.0)
-    # deliberately swapped optics: the guardrail must fire, not resolve silently
-    @test_throws ErrorException AstroFit._build_model(
+    # deliberately swapped optics: the guardrail (now a debug @assert) must fire,
+    # not resolve silently
+    @test_throws AssertionError AstroFit._build_model(
         (a, b) -> Sum(a, b), (:x, :y),
         (@optic(_.right), @optic(_.left)), (g1, g2))
 end

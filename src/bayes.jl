@@ -6,9 +6,14 @@ end
 
 logprior(args...) = _missing_distributions()
 
+# Independent coordinates: a single array (1D fit) or a tuple of arrays (ND fit,
+# e.g. (X, Y) for an image). Normalized to a tuple so `render` can be splatted.
+_coords(x::Tuple) = x
+_coords(x)        = (x,)
+
 function _check_data(x, y, err)
-    length(x) == length(y) || throw(ArgumentError(
-        "`x` and `y` must have the same length"))
+    all(c -> length(c) == length(y), _coords(x)) || throw(ArgumentError(
+        "each coordinate array must have the same length as `y`"))
     length(y) == length(err) || throw(ArgumentError(
         "`y` and `err` must have the same length"))
     all(>(0), err) || throw(ArgumentError("all `err` values must be positive"))
@@ -17,7 +22,7 @@ end
 
 function loglikelihood(cm::CompiledModel, x, y, err)
     _check_data(x, y, err)
-    residual = (render(cm, x) .- y) ./ err
+    residual = (render(cm, _coords(x)...) .- y) ./ err
     -0.5 * sum(abs2, residual) - sum(log, err) - length(y) / 2 * log(2π)
 end
 

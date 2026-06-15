@@ -2,22 +2,36 @@
 # Compile-time AST helpers
 # ---------------------------------------------------------------------------
 
+# Canonicalize a composition expression to strictly-binary form so the model
+# tree has a single fold authority. `a + b + c + d` parses as one n-ary call
+# `+(a,b,c,d)`; Base.afoldl would left-fold it at runtime. We left-fold it here
+# instead — emitting `((a+b)+c)+d` — and use this same canonical form for BOTH
+# the optic walker and the builder closure, so the two can never disagree (and
+# we no longer depend on Base.afoldl's fold order). `-`, `/`, `∘`, `|>` already
+# parse as nested binary calls; we just recurse into their operands.
+function _canonicalize(expr)
+    expr isa Symbol && return expr
+    Meta.isexpr(expr, :call) || return expr
+    op, args = expr.args[1], expr.args[2:end]
+    if op in (:+, :*) && length(args) > 2
+        return foldl((l, r) -> Expr(:call, op, l, _canonicalize(r)),
+                     args[2:end]; init = _canonicalize(args[1]))
+    end
+    Expr(:call, op, map(_canonicalize, args)...)
+end
+
 # Walk the composition expression and return ordered list of (name => optic_path).
 # optic_path is a Vector{Symbol} of :left/:right steps from the root.
 # a ∘ b  → Pipe(b, a): a→.right, b→.left
 # a |> b → Pipe(a, b): a→.left,  b→.right
 # +,-,*,/ → left→.left, right→.right
+# Expects a canonical (binary) expression: see _canonicalize.
 function _walk_optics(expr, path::Vector{Symbol} = Symbol[])
     if expr isa Symbol
         return Pair{Symbol, Vector{Symbol}}[expr => copy(path)]
     end
     Meta.isexpr(expr, :call) || _model_expr_error(expr)
     op = expr.args[1]
-    # `a + b + c` parses as one n-ary call: left-fold it, matching Base.afoldl
-    if op in (:+, :*) && length(expr.args) > 3
-        folded = foldl((l, r) -> Expr(:call, op, l, r), expr.args[2:end])
-        return _walk_optics(folded, path)
-    end
     length(expr.args) == 3 || _model_expr_error(expr)
     a, b = expr.args[2], expr.args[3]
     if op in (:+, :-, :*, :/)
@@ -69,15 +83,13 @@ _strip_leaf(x) = throw(ArgumentError(
     "@model: each leaf must be an AbstractModel or a CompiledModel (prefab), " *
     "got $(typeof(x))"))
 
-# Identity check (safety net for the walker's argument→field map): every leaf
-# optic must hit exactly the value that went into the tree.
+# Identity check: every leaf optic must hit exactly the value that went into the
+# tree. Now redundant by construction — the walker and the builder closure share
+# one canonical fold (see _canonicalize), so the map is correct by derivation.
+# Kept as a debug `@assert` (see _build_model) to guard against future edits to
+# the macro that might reintroduce a divergence. Returns Bool.
 function _identity_check(tree, names, optics, bare)
-    for (n, o, b) in zip(names, optics, bare)
-        o(tree) === b || error(
-            "@model: component `$n` does not match its optic — the walker's " *
-            "operator argument→field map is wrong (internal bug)")
-    end
-    nothing
+    all(((n, o, b),) -> o(tree) === b, zip(names, optics, bare))
 end
 
 # Every parameter of a bare leaf is Free by default (explicit spec entries),
@@ -114,7 +126,7 @@ _registry_entry(o, cm::CompiledModel) = Registry(o, getfield(cm, :names))
 function _build_model(f, names::Tuple{Vararg{Symbol}}, optics::Tuple, values::Tuple)
     bare = map(_strip_leaf, values)
     tree = f(bare...)
-    _identity_check(tree, names, optics, bare)
+    @assert _identity_check(tree, names, optics, bare) "@model: walker optic→field map mismatch (internal bug)"
     spec     = _collect_spec(optics, values)
     priors   = _collect_priors(optics, values)
     registry = NamedTuple{names}(map(_registry_entry, optics, values))
@@ -161,6 +173,7 @@ macro model(expr)
 
     comp_expr === nothing && error("@model: no composition expression found")
 
+    comp_expr = _canonicalize(comp_expr)
     optic_pairs = _walk_optics(comp_expr)
     leafnames   = Symbol[first(p) for p in optic_pairs]
     allunique(leafnames) ||
