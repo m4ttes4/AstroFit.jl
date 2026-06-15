@@ -1,0 +1,15 @@
+# Julia
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+/Manifest.toml
+deps/deps.jl
+docs/build/
+docs/site/
+
+# Internal / dev files
+project.md
+CLAUDE.md
+
+# OS
+.DS_Store
