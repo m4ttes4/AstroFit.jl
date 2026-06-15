@@ -24,8 +24,12 @@ end
 loglikelihood(cm::CompiledModel, p, x, y, err) =
     loglikelihood(withparams(cm, p), x, y, err)
 
+# A model with no priors needs no Distributions: skip logprior entirely so the
+# posterior collapses to the likelihood without forcing the optional dependency.
 logposterior(cm::CompiledModel, x, y, err) =
-    logprior(cm) + loglikelihood(cm, x, y, err)
+    (isempty(getfield(cm, :priors)) ? 0.0 : logprior(cm)) +
+    loglikelihood(cm, x, y, err)
 
 logposterior(cm::CompiledModel, p, x, y, err) =
-    logprior(cm, p) + loglikelihood(cm, p, x, y, err)
+    (isempty(getfield(cm, :priors)) ? 0.0 : logprior(cm, p)) +
+    loglikelihood(cm, p, x, y, err)

@@ -29,7 +29,9 @@ Base.@kwdef struct Redshift1D{T<:Real} <: AbstractModel{1}
     z::T = 0.0
 end
 Redshift1D(z::Real) = Redshift1D{typeof(float(z))}(float(z))
-(m::Redshift1D)(λ) = λ / (1 + m.z)
+# Extend AstroFit.render (must be qualified: a bare `render(...)` would define a
+# new Main.render that shadows the one the framework dispatches on).
+AstroFit.render(m::Redshift1D, λ::Number) = λ / (1 + m.z)
 
 # ── 1. Complesso Hα + [NII] ───────────────────────────────────────────────────
 # Tre Gaussiane con cinematica condivisa (regione di linee strette, NLR).
