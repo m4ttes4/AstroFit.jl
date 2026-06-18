@@ -7,7 +7,7 @@ include("compiled.jl")
 
 export AbstractModel, Gaussian1D, Const1D, Linear1D
 export AbstractConstraint, Free, Fixed, Bounded, Tied, resolve
-export CompiledModel, withparams
+export CompiledModel, withparams, nfree, freevals, paramvector, bounds_vectors
 export render
 
 end

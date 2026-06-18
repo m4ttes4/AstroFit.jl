@@ -80,6 +80,78 @@ function _emit_rebuild(M, S, spec_expr, p)
     block
 end
 
+# ---------------------------------------------------------------------------
+# Utilities — spec traversal (not hot path)
+# ---------------------------------------------------------------------------
+
+_isfree(::Free) = true
+_isfree(::Bounded) = true
+_isfree(::AbstractConstraint) = false
+
+_free_index(::Free{I}) where I = I
+_free_index(::Bounded{I}) where I = I
+
+# Walk a (possibly nested) spec, calling f(constraint) on each leaf constraint.
+function _foreach_constraint(f, spec::NamedTuple)
+    for v in values(spec)
+        _foreach_constraint(f, v)
+    end
+end
+function _foreach_constraint(f, constraints::Tuple)
+    for c in constraints
+        f(c)
+    end
+end
+
+nfree(cm::CompiledModel) = nfree(getfield(cm, :spec))
+function nfree(spec::NamedTuple)
+    n = 0
+    _foreach_constraint(c -> _isfree(c) && (n += 1), spec)
+    n
+end
+
+function freevals(cm::CompiledModel)
+    spec = getfield(cm, :spec)
+    model = getfield(cm, :model)
+    pairs = Tuple{Int,Float64}[]
+    _foreach_spec_with_model(spec, model) do c, val
+        _isfree(c) && push!(pairs, (_free_index(c), Float64(val)))
+    end
+    sort!(pairs; by=first)
+    Tuple(v for (_, v) in pairs)
+end
+
+function _foreach_spec_with_model(f, spec::NamedTuple, model)
+    for (i, v) in enumerate(values(spec))
+        child = getfield(model, fieldnames(typeof(model))[i])
+        _foreach_spec_with_model(f, v, child)
+    end
+end
+function _foreach_spec_with_model(f, constraints::Tuple, model)
+    for (i, c) in enumerate(constraints)
+        f(c, getfield(model, fieldnames(typeof(model))[i]))
+    end
+end
+
+paramvector(cm::CompiledModel) = collect(Float64, freevals(cm))
+
+function bounds_vectors(cm::CompiledModel)
+    pairs = Tuple{Int,Float64,Float64}[]
+    _foreach_constraint(getfield(cm, :spec)) do c
+        if c isa Bounded
+            push!(pairs, (_free_index(c), c.lower, c.upper))
+        elseif c isa Free
+            push!(pairs, (_free_index(c), -Inf, Inf))
+        end
+    end
+    sort!(pairs; by=first)
+    (Float64[lo for (_, lo, _) in pairs], Float64[hi for (_, _, hi) in pairs])
+end
+
+# ---------------------------------------------------------------------------
+# withparams — @generated rebuild from flat parameter vector
+# ---------------------------------------------------------------------------
+
 @generated function withparams(cm::CompiledModel{M,S,P}, p) where {M,S,P}
     spec_expr = :(getfield(cm, :spec))
     rebuild = _emit_rebuild(M, S, spec_expr, :p)
