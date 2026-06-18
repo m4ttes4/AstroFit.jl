@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
-# Display — minimal tree of named components with parameter values and
-# constraints. Constraints are color-coded: free=green, fixed=gray,
-# bounded=yellow, tied=magenta (only when the IO supports color).
+# Display — compact tree of named components with parameter values and
+# constraints. Constraint colors: free=green, fixed=red, bounded=yellow,
+# tied=ANSI orange (only when the IO supports color).
 # ---------------------------------------------------------------------------
 
 _typename(m) = string(nameof(typeof(m)))
@@ -40,16 +40,59 @@ end
 
 _master_path(d, optic) = get(() -> sprint(print, optic), d, _optic_leaves(optic))
 
-_print_constraint(io, ::Free, d)    = printstyled(io, "free"; color = :green)
-_print_constraint(io, ::Fixed, d)   = printstyled(io, "fixed"; color = :light_black)
-_print_constraint(io, c::Bounded, d) =
-    printstyled(io, "∈ [", _fmt(c.lower), ", ", _fmt(c.upper), "]"; color = :yellow)
-_print_constraint(io, c::Tied, d) =
-    printstyled(io, "tied(", join((_master_path(d, o) for o in c.masters), ", "), ")";
-                color = :magenta)
+function _print_orange(io, xs...)
+    if get(io, :color, false)
+        print(io, "\e[38;5;208m")
+        print(io, xs...)
+        print(io, "\e[39m")
+    else
+        print(io, xs...)
+    end
+end
 
-function _param_line(io, indent, label, w, value, c, d)
-    print(io, indent, rpad(label, w), " = ", _fmt(value))
+function _constraint_counts(spec::Tuple)
+    free = fixed = bounded = tied = 0
+    for (_, c) in spec
+        if c isa Free
+            free += 1
+        elseif c isa Fixed
+            fixed += 1
+        elseif c isa Bounded
+            bounded += 1
+        elseif c isa Tied
+            tied += 1
+        end
+    end
+    (; free, fixed, bounded, tied)
+end
+
+function _component_count(names)
+    n = 0
+    for (_, entry) in pairs(names)
+        n += 1
+        entry isa Registry && (n += _component_count(entry.names))
+    end
+    n
+end
+
+function _print_count(io, label, n, color)
+    print(io, "  ", rpad(label * ":", 12))
+    color === nothing ? print(io, n) : printstyled(io, n; color)
+    println(io)
+end
+
+_print_name(io, name) = printstyled(io, name; bold = true)
+_print_type(io, type) = printstyled(io, type; color = :cyan)
+
+_print_constraint(io, ::Free, d) = printstyled(io, "free"; color = :green)
+_print_constraint(io, ::Fixed, d) = printstyled(io, "fixed"; color = :red)
+_print_constraint(io, c::Bounded, d) =
+    printstyled(io, "bounded [", _fmt(c.lower), ", ", _fmt(c.upper), "]"; color = :yellow)
+_print_constraint(io, c::Tied, d) =
+    _print_orange(io, "tied to ", join((_master_path(d, o) for o in c.masters), ", "))
+
+function _param_line(io, prefix, label, w, value, c, d)
+    print(io, prefix, rpad(label, w), " = ", _fmt(value))
     if c !== nothing
         print(io, "  ")
         _print_constraint(io, c, d)
@@ -57,36 +100,64 @@ function _param_line(io, indent, label, w, value, c, d)
     println(io)
 end
 
-function _show_params(io, m::AbstractModel, prefix_optic, spec, indent, d)
+function _show_params(io, m::AbstractModel, prefix_optic, spec, prefix, d)
     fns = fieldnames(typeof(m))
     w = maximum((length(string(f)) for f in fns); init = 0)
-    for f in fns
+    n = length(fns)
+    for (i, f) in enumerate(fns)
+        branch = i == n ? "└─ " : "├─ "
         c = _find_constraint(spec, _compose(prefix_optic, PropertyLens{f}()))
-        _param_line(io, indent, string(f), w, getfield(m, f), c, d)
+        _param_line(io, prefix * branch, string(f), w, getfield(m, f), c, d)
     end
 end
 
-function _show_names(io, model, spec, names, prefix_optic, indent, d)
+function _component_header(io, prefix, branch, name, type)
+    print(io, prefix, branch)
+    _print_name(io, string(name))
+    print(io, " :: ")
+    _print_type(io, type)
+    println(io)
+end
+
+function _show_names(io, model, spec, names, prefix_optic, prefix, d)
     w = maximum((length(string(k)) for (k, entry) in pairs(names)
                  if !(entry isa Registry) &&
                     !(_compose(prefix_optic, entry)(model) isa AbstractModel));
                 init = 0)
-    for (k, entry) in pairs(names)
+    entries = collect(pairs(names))
+    n = length(entries)
+    for (i, (k, entry)) in enumerate(entries)
+        last = i == n
+        branch = last ? "└─ " : "├─ "
+        child_prefix = prefix * (last ? "   " : "│  ")
         if entry isa Registry
             full = _compose(prefix_optic, entry.optic)
-            println(io, indent, k, " :: ", _typename(full(model)))
-            _show_names(io, model, spec, entry.names, full, indent * "  ", d)
+            _component_header(io, prefix, branch, k, _typename(full(model)))
+            _show_names(io, model, spec, entry.names, full, child_prefix, d)
         else
             full = _compose(prefix_optic, entry)
             sub  = full(model)
             if sub isa AbstractModel
-                println(io, indent, k, " :: ", _typename(sub))
-                _show_params(io, sub, full, spec, indent * "  ", d)
+                _component_header(io, prefix, branch, k, _typename(sub))
+                _show_params(io, sub, full, spec, child_prefix, d)
             else
-                _param_line(io, indent, string(k), w, sub, _find_constraint(spec, full), d)
+                _param_line(io, prefix * branch, string(k), w, sub, _find_constraint(spec, full), d)
             end
         end
     end
+end
+
+function _show_summary(io, cm::CompiledModel)
+    counts = _constraint_counts(getfield(cm, :spec))
+    printstyled(io, "AstroFit.CompiledModel"; bold = true)
+    println(io)
+    _print_count(io, "components", _component_count(getfield(cm, :names)), nothing)
+    _print_count(io, "free", counts.free, :green)
+    _print_count(io, "fixed", counts.fixed, :red)
+    _print_count(io, "bounded", counts.bounded, :yellow)
+    print(io, "  ", rpad("tied:", 12))
+    _print_orange(io, counts.tied)
+    println(io)
 end
 
 function Base.show(io::IO, ::MIME"text/plain", cm::CompiledModel)
@@ -94,9 +165,8 @@ function Base.show(io::IO, ::MIME"text/plain", cm::CompiledModel)
     spec  = getfield(cm, :spec)
     names = getfield(cm, :names)
     buf   = IOContext(IOBuffer(), io)
-    n = nfree(cm)
-    printstyled(buf, "CompiledModel"; bold = true)
-    println(buf, "  (", n, " free parameter", n == 1 ? "" : "s", ")")
+    _show_summary(buf, cm)
+    println(buf)
     d = _collect_paths!(Dict{Any, String}(), names, identity, "", model)
     if isempty(keys(names))
         model isa AbstractModel ?
@@ -119,7 +189,10 @@ function Base.show(io::IO, ::MIME"text/plain", ref::ComponentRef)
     model = getfield(root, :model)
     spec  = getfield(root, :spec)
     buf   = IOContext(IOBuffer(), io)
-    println(buf, "ComponentRef :: ", _typename(optic(model)))
+    printstyled(buf, "AstroFit.ComponentRef"; bold = true)
+    print(buf, " :: ")
+    _print_type(buf, _typename(optic(model)))
+    println(buf)
     d = _collect_paths!(Dict{Any, String}(), getfield(root, :names), identity, "", model)
     isempty(keys(names)) ?
         _show_params(buf, optic(model), optic, spec, "  ", d) :

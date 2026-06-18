@@ -1,33 +1,64 @@
 # AstroFit
 
-A Julia library for building, constraining, and fitting parametric astrophysical models.
+Build, constrain, and fit parametric astrophysical models in Julia.
 
-AstroFit lets you compose models from reusable building blocks, attach physical constraints, and extract a flat parameter vector suitable for any gradient-based or gradient-free optimizer — all with zero-allocation, type-stable hot paths and full ForwardDiff compatibility.
+AstroFit is for workflows where the physics is full of constraints: shared line
+centers, tied widths, fixed ratios, bounded amplitudes, reusable components, and
+custom model pieces. Handwritten functions with those rules hardcoded are fast,
+but they quickly become hard to reuse. AstroFit gives you composable models and
+keeps the fitting hot path close to handwritten speed by compiling parameter
+scatter and tie resolution into generated, straight-line code. ✨
+
+Under the hood AstroFit uses
+[Accessors.jl](https://github.com/JuliaObjects/Accessors.jl) to point into model
+trees and rebuild immutable structs. The idea for this small library came while
+reading [AccessibleModels.jl](https://github.com/JuliaAPlavin/AccessibleModels.jl),
+which connects Accessors-style parameter selection with fitting and exploration
+workflows.
+
+> [!WARNING]
+> AstroFit is a working proof of concept, not a production-ready package. It
+> works for the workflows I built it for, but the API, documentation, and test
+> coverage should still be treated as experimental. I wrote and maintain the
+> repository myself, and AI assistance played an important role while designing
+> the generated-function internals that make `withparams` fast.
+
+- Define reusable model components with clear names.
+- Attach physical constraints with `@constrain`.
+- Fit with a flat parameter vector through fast `withparams(cm, p)`.
+- Extend the system with plain Julia structs and `render` methods.
 
 ---
 
-## Table of Contents
+## Contents
 
-- [Installation](#installation)
+- [Motivation](#motivation)
 - [Quick Start](#quick-start)
-- [Core Concepts](#core-concepts)
-- [Building Models with `@model`](#building-models-with-model)
-- [Adding Constraints with `@constrain`](#adding-constraints-with-constrain)
-- [Working with Parameters](#working-with-parameters)
+- [Building Models](#building-models)
+- [Complex Example](#complex-example)
+- [Accessing Submodels](#accessing-submodels)
+- [Adding Constraints](#adding-constraints)
+- [Working With Parameters](#working-with-parameters)
 - [Fitting Loop](#fitting-loop)
+- [Benchmarks](#benchmarks)
 - [Extending AstroFit](#extending-astrofit)
 - [Internal Design](#internal-design)
 
 ---
 
-## Installation
+## Motivation
 
-```julia
-using Pkg
-Pkg.add("AstroFit")
-```
+Astrophysical models are rarely just independent parameters. A spectrum might
+need two emission lines to share a velocity width, a doublet to keep a fixed flux
+ratio, or a redshift component to move an entire rest-frame model.
 
-Requires Julia ≥ 1.9.
+You can hardcode those rules in one big Julia function. That is fast, but it
+does not compose well. You can also use a model-management layer that resolves
+constraints with runtime lookups, but that can add overhead in the fitting loop.
+
+AstroFit aims for the useful middle ground: write models as reusable pieces,
+express the constraints explicitly, then let Julia compile the resolved hot path.
+Nice workflow, fast evaluation 🙂
 
 ---
 
@@ -35,132 +66,71 @@ Requires Julia ≥ 1.9.
 
 ```julia
 using AstroFit
+using Optimization, OptimizationOptimJL
+using ForwardDiff
 
-# 1. Build a composite model from named components
 m = @model begin
     narrow = Gaussian1D(amplitude=2.0, mean=6563.0, sigma=1.5)
     broad  = Gaussian1D(amplitude=0.5, mean=6563.0, sigma=8.0)
     narrow + broad
 end
 
-# 2. Attach constraints
 cm = @constrain m begin
     @bound narrow.amplitude in (0, Inf)
     @bound narrow.mean      in (6555.0, 6570.0)
     @bound narrow.sigma     in (0.1, Inf)
     @bound broad.amplitude  in (0, Inf)
-    @tie   broad.mean       = narrow.mean     # always equal to narrow.mean
+    @tie   broad.mean       = narrow.mean
     @bound broad.sigma      in (1.0, Inf)
 end
 
-# 3. Evaluate
 wavelengths = 6540.0:0.1:6590.0
 flux = render(cm, wavelengths)
+observed_flux = flux
+err = fill(0.1, length(wavelengths))
 
-# 4. Extract parameters for an optimizer
-p0         = paramvector(cm)          # Vector{Float64}, only free params
-lo, hi     = bounds_vectors(cm.spec)  # bound vectors aligned with p0
+prob = OptimizationProblem(cm, wavelengths, observed_flux, err)
+sol = solve(prob, Fminbox(LBFGS()))
 
-# 5. Fit (example with any optimizer)
-loss(p) = sum(abs2, render(withparams(cm, p), wavelengths) .- observed_flux)
-p_fit   = your_optimizer(loss, p0, lo, hi)
-
-# 6. Reconstruct the fitted model
-cm_fit = withparams(cm, p_fit)
-println("narrow amplitude = ", cm_fit.narrow.amplitude)
+fit = withparams(cm, sol.u)
+println(fit.narrow.amplitude)
 ```
+
+What happened:
+
+- `@model` created a named, composable model tree.
+- `@constrain` added bounds and a tie.
+- `OptimizationProblem(cm, x, y, err)` built a native `Optimization.jl` problem.
+- `withparams(cm, sol.u)` rebuilt the fitted constrained model.
 
 ---
 
-## Core Concepts
+## Building Models
 
-### Models
-
-A **model** is an immutable struct that knows how to evaluate itself on inputs. Every model is a subtype of `AbstractModel{N}`, where `N` is the number of input dimensions. You evaluate a model with `render(model, x...)`.
-
-Leaf models hold parameters as struct fields:
+AstroFit models are immutable Julia structs. You evaluate them with `render`.
 
 ```julia
 g = Gaussian1D(amplitude=1.0, mean=0.0, sigma=2.0)
-render(g, 0.5)   # => 0.939...
-render(g, -1:0.5:1)  # broadcast over array
+render(g, 0.5)
+render(g, -1:0.5:1)
 ```
 
-### CompiledModel
+### Named models with `@model`
 
-A `CompiledModel` bundles a model tree together with its constraints and a component registry. It is the central object you interact with after calling `@model` or `@constrain`.
+Use block form when you want named components:
 
 ```julia
 cm = @model begin
-    a = Gaussian1D(amplitude=1.0, mean=0.0, sigma=1.0)
-    b = Const1D(value=0.5)
-    a + b
-end
-# cm is a CompiledModel
-
-render(cm, 0.0)        # evaluate
-cm.a.amplitude         # read a component's parameter
-nfree(cm)              # number of free parameters
-```
-
-A `CompiledModel` carries four pieces of information:
-
-| Field    | Type               | Contents                                         |
-|----------|--------------------|--------------------------------------------------|
-| `.model` | `M`                | The evaluated model tree (always tie-resolved)   |
-| `.spec`  | `S <: Tuple`       | Tuple of `(optic, constraint)` pairs             |
-| `.priors`| `P <: Tuple`       | Tuple of `(optic, distribution)` pairs           |
-| `.names` | `R <: NamedTuple`  | Component name → optic (or `Registry`) mapping   |
-
-**Invariant I1:** `.model` is always tie-resolved. You will never observe a stale `Tied` parameter. Every constructor path goes through `_compiled`, which calls `resolve` before storing the tree.
-
-### Constraint Types
-
-Four constraint types govern each parameter:
-
-| Type         | Meaning                                           |
-|--------------|---------------------------------------------------|
-| `Free()`     | Parameter is unconstrained; included in fit       |
-| `Fixed(v)`   | Parameter locked to value `v`; excluded from fit  |
-| `Bounded(lo, hi)` | Parameter is free but bounded to `[lo, hi]`  |
-| `Tied(f, masters)` | Parameter computed as `f(master1, master2, ...)`; excluded from fit |
-
-All bare model parameters start as `Free` when you call `@model`. `@constrain` overrides specific entries.
-
-### Operators
-
-Models compose with arithmetic operators and pipes:
-
-| Expression   | Type produced        | Evaluation                      |
-|--------------|----------------------|---------------------------------|
-| `a + b`      | `Sum{N,L,R}`         | `render(a,x) + render(b,x)`     |
-| `a - b`      | `Difference{N,L,R}`  | `render(a,x) - render(b,x)`     |
-| `a * b`      | `Product{N,L,R}`     | `render(a,x) * render(b,x)`     |
-| `a / b`      | `Quotient{N,L,R}`    | `render(a,x) / render(b,x)`     |
-| `a ∘ b`      | `Pipe{N,L,R}`        | `render(a, render(b,x))`        |
-| `a \|> b`    | `Pipe{N,L,R}`        | `render(b, render(a,x))`        |
-
-> Note: bare scalars are not allowed in model algebra. Use a named `Const1D` so the constant is fittable and addressable.
-
----
-
-## Building Models with `@model`
-
-`@model` constructs a `CompiledModel` from a composition of named components.
-
-### Block form
-
-```julia
-cm = @model begin
-    name₁ = model₁
-    name₂ = model₂
-    name₁ + name₂
+    cont = Linear1D(slope=0.0, intercept=1.0)
+    ha   = Gaussian1D(amplitude=10.0, mean=6562.8, sigma=2.0)
+    nii  = Gaussian1D(amplitude=3.0, mean=6583.4, sigma=2.0)
+    cont + ha + nii
 end
 ```
 
-Bindings define component names. The final expression is the composition tree. Every bound name must appear in the composition.
+The final expression is the composition. Every bound name must appear in it.
 
-### Inline form
+Inline form also works:
 
 ```julia
 a = Gaussian1D(amplitude=1.0, mean=0.0, sigma=1.0)
@@ -168,44 +138,42 @@ b = Const1D(value=0.5)
 cm = @model a + b
 ```
 
-Names are taken from the in-scope variable symbols.
+### Composition operators
 
-### Composing multiple components
+| Expression | Meaning |
+|------------|---------|
+| `a + b` | Sum of two models |
+| `a - b` | Difference |
+| `a * b` | Product |
+| `a / b` | Quotient |
+| `a ∘ b` | Pipe: `a(b(x))` |
+| `a \|> b` | Pipe: `b(a(x))` |
+
+Use named `Const1D` components instead of bare scalar constants, so constants
+remain addressable and constrainable.
+
+### Reusable prefabs
+
+A component can itself be a constrained `CompiledModel`. Its constraints travel
+with it and are namespaced under the parent component name.
 
 ```julia
-cm = @model begin
-    cont   = Linear1D(slope=0.0, intercept=1.0)
-    line1  = Gaussian1D(amplitude=2.0, mean=6563.0, sigma=2.0)
-    line2  = Gaussian1D(amplitude=0.7, mean=6548.0, sigma=2.0)
-    cont + line1 + line2
-end
-```
-
-n-ary `+` is left-folded at macro expansion time, so `a + b + c` becomes `(a + b) + c`, producing a binary tree.
-
-### Nesting prefabs
-
-A component can itself be a `CompiledModel` (a *prefab*). Its constraints travel into the parent model, namespaced under its binding name:
-
-```julia
-ha_line = @constrain Gaussian1D(amplitude=10.0, mean=6563.0, sigma=2.0) begin
+ha_line = @constrain Gaussian1D(amplitude=10.0, mean=6562.8, sigma=2.0) begin
     @bound amplitude in (0, Inf)
     @bound sigma     in (0.1, Inf)
 end
 
 spectrum = @model begin
     cont = Linear1D(slope=0.0, intercept=1.0)
-    ha   = ha_line       # prefab: its constraints are inherited
+    ha   = ha_line
     cont + ha
 end
-
-# spectrum.ha.amplitude is Bounded(0, Inf)  — inherited from ha_line
-# spectrum.cont.slope is Free               — default for bare leaves
 ```
 
-Prefab `Tied` master optics are automatically re-rooted under the new prefix. A tie that was `narrow.sigma` inside the prefab becomes `ha.narrow.sigma` in the parent.
+If a prefab has internal ties, their master paths are re-rooted under the new
+prefix automatically.
 
-### Pipe composition (redshift example)
+### Pipe example: redshift
 
 ```julia
 Base.@kwdef struct Redshift1D{T<:Real} <: AbstractModel{1}
@@ -218,222 +186,366 @@ z_shift = @constrain Redshift1D(z=0.05) begin
 end
 
 observed = @model begin
-    spectrum = rest_spectrum   # another CompiledModel
+    spectrum = rest_spectrum
     z_shift  = z_shift
-    spectrum ∘ z_shift         # evaluates as: spectrum(z_shift(λ_obs))
+    spectrum ∘ z_shift
 end
 ```
 
 ---
 
-## Adding Constraints with `@constrain`
+## Complex Example
 
-`@constrain` takes a model (or `CompiledModel`) and a block of constraint directives. It returns a new `CompiledModel` with the constraints applied.
+Here is a more realistic spectrum model: continuum + Hβ + [OIII] + Hα + [NII],
+with the usual line ratios and shared kinematics written as constraints.
+
+The observed-frame wrapper uses two tiny models:
+
+- `RedshiftAxis`: maps `lambda_obs` to `lambda_rest = lambda_obs / (1 + z)`;
+- `RedshiftFlux`: scales `F_lambda` by `1 / (1 + z)`.
+
+Both use the same physical redshift through a tie:
+
+```julia
+Base.@kwdef struct RedshiftAxis{T<:Real} <: AbstractModel{1}
+    z::T = 0.0
+end
+AstroFit.render(m::RedshiftAxis, lambda::Number) = lambda / (1 + m.z)
+
+Base.@kwdef struct RedshiftFlux{T<:Real} <: AbstractModel{1}
+    z::T = 0.0
+end
+AstroFit.render(m::RedshiftFlux, lambda::Number) = inv(1 + m.z)
+
+observed = @model begin
+    rest = rest_spec
+    wavelength_shift = RedshiftAxis(z = 0.0)
+    flux_scale = RedshiftFlux(z = 0.0)
+
+    (rest ∘ wavelength_shift) * flux_scale
+end
+
+observed = @constrain observed begin
+    @bound wavelength_shift.z in (0.0, 1.0)
+    @tie   flux_scale.z = wavelength_shift.z
+end
+```
+
+The rest-frame spectrum itself is still an ordinary AstroFit model. The [NII]
+lines are tied to Hα, Hβ follows the Balmer decrement, and [OIII] keeps its fixed
+doublet ratio.
+
+```julia
+rest_spec = @model begin
+    cont = Linear1D(slope = -2.0e-5, intercept = 1.15)
+    hbeta = Gaussian1D(amplitude = 2.4, mean = 4861.3, sigma = 2.8)
+    oiii_b = Gaussian1D(amplitude = 1.6, mean = 4958.9, sigma = 2.8)
+    oiii_r = Gaussian1D(amplitude = 4.8, mean = 5006.8, sigma = 2.8)
+    ha = Gaussian1D(amplitude = 8.5, mean = 6562.8, sigma = 3.2)
+    nii_b = Gaussian1D(amplitude = 1.0, mean = 6548.1, sigma = 3.2)
+    nii_r = Gaussian1D(amplitude = 3.1, mean = 6583.4, sigma = 3.2)
+
+    cont + hbeta + oiii_b + oiii_r + ha + nii_b + nii_r
+end
+
+rest_spec = @constrain rest_spec begin
+    @tie nii_b.amplitude = ha.amplitude / 3.0
+    @tie nii_r.amplitude = (3.06 / 3.0) * ha.amplitude
+    @tie nii_b.mean      = (6548.1 / 6562.8) * ha.mean
+    @tie nii_r.mean      = (6583.4 / 6562.8) * ha.mean
+    @tie nii_b.sigma     = ha.sigma
+    @tie nii_r.sigma     = ha.sigma
+
+    @tie hbeta.amplitude = ha.amplitude / 2.86
+    @tie hbeta.mean      = (4861.3 / 6562.8) * ha.mean
+    @tie hbeta.sigma     = ha.sigma
+
+    @tie oiii_b.amplitude = oiii_r.amplitude / 2.98
+    @tie oiii_b.mean      = (4958.9 / 5006.8) * oiii_r.mean
+    @tie oiii_b.sigma     = oiii_r.sigma
+end
+```
+
+Rendered at `z = 0.0, 0.1, 0.2, 0.5`. The lines move to longer observed
+wavelengths, and the `F_lambda` density is scaled by `1 / (1 + z)`.
+
+![redshifted galaxy spectrum](examples/complex_redshifted_galaxy_spectrum.png)
+
+Full script: [`examples/complex_redshifted_galaxy_spectrum.jl`](examples/complex_redshifted_galaxy_spectrum.jl).
+
+---
+
+## Accessing Submodels
+
+The names you use inside `@model` become the names you use later. That makes
+large models easy to inspect and compose.
+
+From the complex example above:
+
+```julia
+observed.rest                 # the rest-frame spectrum
+observed.wavelength_shift     # the RedshiftAxis component
+observed.flux_scale           # the RedshiftFlux component
+
+observed.rest.ha              # Halpha Gaussian
+observed.rest.nii_r           # [NII] 6583 Gaussian
+observed.rest.oiii_r.sigma    # a parameter inside the [OIII] component
+observed.wavelength_shift.z   # the free redshift parameter
+observed.flux_scale.z         # tied to wavelength_shift.z
+```
+
+This is the main ergonomic idea: compose models from named pieces, add
+constraints at the model level, and still access the pieces with ordinary dot
+syntax.
+
+---
+
+## Adding Constraints
+
+`@constrain` takes a model and returns a new `CompiledModel` with updated
+parameter rules.
 
 ```julia
 cm = @constrain model begin
-    @fix   component.param = value    # lock to value
-    @fix   component.param            # lock at current value
+    @fix   component.param = value
+    @fix   component.param
     @bound component.param in (lo, hi)
     @tie   component.param = expr(other.param, ...)
-    @free  component.param            # release a constraint (back to Free)
+    @free  component.param
 end
 ```
 
-### `@fix` — locking a parameter
+### `@fix`
+
+Lock a parameter and remove it from the fit vector.
 
 ```julia
-@constrain cm begin
-    @fix narrow.mean = 6562.8    # set and lock at 6562.8
-    @fix broad.mean              # lock at the current value in cm
+cm = @constrain cm begin
+    @fix narrow.mean = 6562.8
+    @fix broad.mean
 end
 ```
 
-Fixed parameters are removed from the free parameter vector entirely.
+### `@bound`
 
-### `@bound` — bounding a parameter
+Keep a parameter free, but give it lower and upper bounds.
 
 ```julia
-@constrain cm begin
+cm = @constrain cm begin
     @bound narrow.amplitude in (0, Inf)
     @bound narrow.sigma     in (0.5, 20.0)
 end
 ```
 
-Bounded parameters remain in the free parameter vector. If the current value already violates the bounds, `@constrain` throws immediately — there is no silent clamping.
+AstroFit checks bounds immediately. It does not silently clamp invalid values.
 
-### `@tie` — dependent parameters
+### `@tie`
+
+Compute one parameter from one or more master parameters.
 
 ```julia
-@constrain cm begin
-    @tie broad.mean  = narrow.mean                  # single master
-    @tie broad.sigma = narrow.sigma                 # same
-    @tie blue.mean   = (4958.9 / 5006.8) * red.mean # expression with masters
-    @tie blue.amp    = red.amp / 2.98               # ratio constraint
+cm = @constrain cm begin
+    @tie broad.mean  = narrow.mean
+    @tie broad.sigma = narrow.sigma
+    @tie blue.mean   = (4958.9 / 5006.8) * red.mean
+    @tie blue.amp    = red.amp / 2.98
 end
 ```
 
-The RHS is an arbitrary Julia expression. Every `component.param` reference in the RHS is auto-detected as a master. The tie is stored as a closure `f(masters...) -> value` and re-evaluated every time masters change.
+Tied targets are removed from the free parameter vector. Tie chains and self-ties
+are rejected, so the dependency graph stays simple.
 
-Constraints on `Tied` targets are rejected (`@bound`, `@fix`, `@prior` on a tied param all throw). Tie chains (master is itself tied) are also rejected.
+### `@free`
 
-### `@free` — releasing a constraint
+Release an existing constraint.
 
 ```julia
-@constrain cm begin
-    @free narrow.sigma    # previously Fixed or Tied; now free again
+cm = @constrain cm begin
+    @free narrow.sigma
 end
 ```
 
-### Constraint merging
+### Merging constraints
 
-Calling `@constrain` on an existing `CompiledModel` merges the new constraints with the existing ones. Within the same block, the last entry for a given parameter wins. New entries override old ones:
+Calling `@constrain` on an already constrained model merges the new rules with
+the existing ones. The newest rule for a parameter wins.
 
 ```julia
-# ha_line already has @bound amplitude in (0, Inf)
 spectrum = @constrain spectrum begin
-    @bound ha.amplitude in (0, 100)   # overrides the prefab bound
+    @bound ha.amplitude in (0, 100)
 end
 ```
 
 ### Cross-component ties
 
-Ties can reference parameters in sibling components, including across nested prefabs:
+Ties can reference sibling components and nested prefabs.
 
 ```julia
 rest_spec = @constrain rest_spec begin
-    @tie hbeta.amplitude = ha_nii.ha.amplitude / 2.86  # Balmer decrement
-    @tie hbeta.sigma     = oiii.blue.sigma              # shared kinematics
+    @tie hbeta.amplitude = ha_nii.ha.amplitude / 2.86
+    @tie hbeta.sigma     = oiii.blue.sigma
 end
 ```
 
-The master paths are resolved against the full registry at the time `@constrain` runs.
-
 ---
 
-## Working with Parameters
+## Working With Parameters
 
-### Extracting the parameter vector
-
-```julia
-p = paramvector(cm)    # Vector{Float64} of all free parameter values
-```
-
-The vector contains only `Free` and `Bounded` parameters, in the order they appear in the spec (which reflects the order of `@model` bindings and operator tree structure). `Fixed` and `Tied` parameters are excluded.
+### Flat parameter vectors
 
 ```julia
-nfree(cm)              # Int: number of free parameters
-freevals(cm)           # NTuple of free parameter values (allocation-free)
+p = paramvector(cm)
+nfree(cm)
+freevals(cm)
 ```
 
-### Bounds
+`paramvector(cm)` contains only `Free` and `Bounded` parameters. `Fixed` and
+`Tied` parameters are excluded.
+
+### Bounds for optimizers
 
 ```julia
 lo, hi = bounds_vectors(cm.spec)
-# lo, hi are Vector{Float64} aligned with paramvector(cm)
-# Free params → (-Inf, Inf); Bounded params → (lo, hi)
 ```
 
-### Rebuilding from a vector: `withparams`
+The returned vectors align with `paramvector(cm)`.
 
-`withparams` is the hot path for the fitting loop:
+### Rebuilding with `withparams`
 
 ```julia
 cm_new = withparams(cm, p)
 ```
 
-It scatters `p` into the free parameter positions, then re-resolves all `Tied` parameters. The `CompiledModel` type (including `.spec` and `.names`) is unchanged; only `.model` is updated.
+`withparams` scatters `p` into the free parameter positions, then re-resolves all
+tied parameters. This is the function you call inside the fitting loop.
 
-`withparams` allocates only the new model struct fields — no intermediate arrays.
-
-### Reading individual parameters
-
-```julia
-cm.component.param         # value or ComponentRef
-cm.component               # ComponentRef (cursor into the subtree)
-cm[:component].param       # explicit bracket form (avoids reserved name conflicts)
-```
-
-Parameter access is purely read-path: it applies the stored optic to `.model`.
-
-### Updating a single parameter
+### Reading and updating values
 
 ```julia
-using AstroFit  # re-exports @set from Accessors
+cm.component.param
+cm[:component].param
+
+using AstroFit
 cm2 = @set cm.narrow.amplitude = 3.5
 ```
 
-`@set` validates bounds and rejects writes to `Tied` or reserved fields. It returns a new `CompiledModel` with the updated value and all ties re-resolved.
+`@set` validates bounds, rejects writes to tied parameters, and returns a new
+tie-resolved `CompiledModel`.
 
 ---
 
 ## Fitting Loop
 
-### Gradient-free optimizer
+AstroFit ships an `Optimization.jl` extension, so most fits do not need a custom
+loss function. Load `Optimization`, `OptimizationOptimJL`, and `ForwardDiff`, then
+build the problem directly from the constrained model:
 
 ```julia
-using Optim
+using Optimization, OptimizationOptimJL
+using ForwardDiff
 
-cm = @constrain ... end
-lo, hi = bounds_vectors(cm.spec)
-p0     = paramvector(cm)
+prob = OptimizationProblem(cm, wavelengths, observed_flux, err)
+sol = solve(prob, Fminbox(LBFGS()))
 
-result = optimize(
-    p -> sum(abs2, render(withparams(cm, p), x) .- y),
-    lo, hi, p0,
-    Fminbox(NelderMead()),
-)
-cm_fit = withparams(cm, result.minimizer)
+fit = withparams(cm, sol.u)
 ```
 
-### Gradient-based optimizer with ForwardDiff
+`OptimizationProblem(cm, x, y, err)` uses the current free parameters as the
+initial vector and reads `@bound` constraints as `lb` / `ub`. If the model has no
+bounds, it leaves the problem unbounded, so solvers like `LBFGS()` or
+`NelderMead()` work directly:
 
 ```julia
-using Optim, ForwardDiff
-
-# Define a stable loss functor (not a closure) to avoid type instability
-struct SpectralLoss{CM, X, Y}
-    cm::CM
-    x::X
-    y::Y
-end
-(l::SpectralLoss)(p) = sum(abs2, render(withparams(l.cm, p), l.x) .- l.y)
-
-loss = SpectralLoss(cm, wavelengths, observed_flux)
-p0   = paramvector(cm)
-
-result = optimize(loss, p0, LBFGS(); autodiff=:forward)
-cm_fit = withparams(cm, result.minimizer)
+prob = OptimizationProblem(cm, wavelengths, observed_flux)
+sol = solve(prob, NelderMead())
+fit = withparams(cm, sol.u)
 ```
 
-> **ForwardDiff note:** use a named functor or a `struct` callable rather than an anonymous closure. ForwardDiff tags the function type into `Dual{Tag{F,V},V,N}`. An anonymous closure created freshly each call has a different (anonymous) type each time, triggering recompilation. A named functor has a stable type, so the generated code is compiled exactly once per `(model_type, chunk_size)` combination.
+The objective is the negative log-likelihood:
+
+- with `err`, it uses Gaussian errors;
+- without `err`, it becomes the unit-variance least-squares objective;
+- if the model has priors, the same path becomes a negative log-posterior.
+
+2D models work the same way. Pass coordinates as a tuple:
+
+```julia
+prob = OptimizationProblem(cm2d, (X, Y), image, err)
+sol = solve(prob, Fminbox(LBFGS()))
+```
+
+Under the hood, the extension wraps the same hot path you would write by hand:
+
+```julia
+loss(p) = -logposterior(cm, p, x, y, err)
+```
+
+That means the fit goes through `withparams(cm, p)`, so ties are resolved by the
+compiled parameter engine rather than by runtime constraint lookup.
+
+---
+
+## Benchmarks
+
+The benchmark asks one specific question:
+
+> If a model has physical constraints, how much slower is AstroFit than the
+> hand-written Julia function you would write for maximum speed?
+
+```julia
+render(withparams(cm, p), x)      # AstroFit
+handwritten_constrained(p, x)     # hardcoded baseline
+```
+
+The hand-written baseline has no abstraction cost: the fixed values, bounds, and
+ties are baked directly into the function body. That is the fastest version, but
+it is also the least reusable one.
+
+AstroFit keeps the reusable model representation, but it does not resolve ties by
+walking names or doing constraint lookups at every evaluation. The constraint
+spec is part of the `CompiledModel` type. When you call `withparams(cm, p)`,
+generated functions emit straight-line code that:
+
+- selects the free parameters;
+- writes them into the model tree;
+- recomputes tied parameters from their masters.
+
+So the benchmark isolates the cost that should matter in a fit loop:
+
+```julia
+loss(p) = sum(abs2, render(withparams(cm, p), x) .- y)
+```
+
+If `withparams` is tiny and allocation-free, AstroFit gets the useful part of a
+model manager without paying a runtime lookup cost for every constraint.
+
+![AstroFit benchmark scaling](bench/scaling.png)
+
+The current result is the one AstroFit is built around: constrained AstroFit
+rendering stays close to the hand-written constrained baseline as models grow,
+while `withparams` remains tiny and allocation-free in the measured cases. This
+is the part we care about most 🙂
+
+See [`bench/README.md`](bench/README.md) for the benchmark script, command, and
+current numbers.
 
 ---
 
 ## Extending AstroFit
 
-Any Julia struct that subtypes `AbstractModel{N}` is a first-class AstroFit model. You only need to:
-
-1. Subtype `AbstractModel{N}` (N = number of input dimensions)
-2. Define `render(m::YourModel, x::Number...)` (scalar evaluation)
-
-Everything else — composition, naming, constraints, `withparams`, property access — works automatically.
-
-### Example: redshift operator
+Any Julia struct that subtypes `AbstractModel{N}` can be an AstroFit model.
 
 ```julia
 Base.@kwdef struct Redshift1D{T<:Real} <: AbstractModel{1}
     z::T = 0.0
 end
 
-# Constructor for non-keyword call
 Redshift1D(z::Real) = Redshift1D{typeof(float(z))}(float(z))
 
-# Scalar evaluation: maps observed wavelength to rest-frame
 render(m::Redshift1D, λ) = λ / (1 + m.z)
 ```
 
-This model can then be used everywhere:
+Then use it like any built-in component:
 
 ```julia
 z_shift = @constrain Redshift1D(z=0.05) begin
@@ -443,19 +555,16 @@ end
 observed = @model begin
     spectrum = rest_spectrum
     z_shift  = z_shift
-    spectrum ∘ z_shift      # pipe: evaluates spectrum(z_shift(λ_obs))
+    spectrum ∘ z_shift
 end
-
-nfree(observed)             # counts z as free
-paramvector(observed)       # includes z
 ```
 
-### Rules for custom models
+Rules for custom models:
 
-- All fields must be the same type `T <: Real` (use `Base.@kwdef` + `promote` for mixed literals).
-- `render` must accept `Number` arguments (not just `Float64`) so ForwardDiff Dual values flow through.
-- Do not implement `broadcastable` — the default `Ref(m)` inherited from `AbstractModel` is correct.
-- Compound models (`Sum`, `Pipe`, etc.) are constructed automatically by operators; you never define them directly.
+- subtype `AbstractModel{N}`;
+- define scalar `render(m::YourModel, x::Number...)`;
+- accept `Number`, not only `Float64`, so ForwardDiff dual values work;
+- let AstroFit handle composition, naming, constraints, and `withparams`.
 
 ---
 
@@ -874,6 +983,6 @@ Julia specializes on types, not values. Recompilation happens when the *type* of
 | Different chunk size `N` in `Dual{Tag,V,N}` | Yes, once per `N` |
 | Different function type in ForwardDiff tag | Yes, once per function type |
 
-The last point is the most common pitfall. ForwardDiff's tag includes the function type: `Tag{F, V}`. If `F` is an anonymous closure created freshly each call (e.g., `p -> loss(cm, p)` written inside a loop), its type changes each iteration, triggering recompilation every time. The fix is to use a named struct callable (shown in the [Fitting Loop](#fitting-loop) section).
+The last point is the most common pitfall. ForwardDiff's tag includes the function type: `Tag{F, V}`. If `F` is an anonymous closure created freshly each call (e.g., `p -> loss(cm, p)` written inside a loop), its type changes each iteration, triggering recompilation every time. The `Optimization.jl` extension gives you a stable path for normal fits. If you write your own objective, prefer a named callable type over recreating closures in a loop.
 
 Once compiled, subsequent calls with the same type combination hit the cache and pay no compilation overhead.

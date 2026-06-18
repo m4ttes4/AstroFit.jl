@@ -1,12 +1,12 @@
-# Shared definitions for the constraint-overhead benchmarks.
+# Shared definitions for the `withparams` overhead benchmarks.
 #
 # The handwritten kernels mirror the exact render formulas in src/model.jl:
 #   Gaussian1D : A * exp(-((x - μ)/σ)^2 / 2)      (model.jl:22)
 #   Linear1D   : slope * x + intercept            (model.jl:39)
-# Each kernel takes (p, x::Vector) and returns y::Vector, so it computes the
-# same thing as `render(withparams(cm, p), x)`. The constrained kernels bake
-# the ties straight into the code; their `p` ordering matches AstroFit's free
-# parameter order (`free_lenses`/spec order) so the *same* p drives both.
+# Each constrained kernel takes (p, x::Vector) and returns y::Vector, so it
+# computes the same thing as `render(withparams(cm, p), x)`. Its constraints
+# are hardcoded by hand and its `p` ordering matches AstroFit's free parameter
+# order, so the same parameter vector drives both implementations.
 
 using AstroFit
 
@@ -32,12 +32,6 @@ function small_models()
         @bound line.sigma     in (0.3, 10.0)
     end
     free, con
-end
-
-# all 5 params free:           p = [slope, intercept, A, μ, σ]
-function hand_small_free(p, x)
-    slope, intercept, A, μ, σ = p
-    @. slope * x + intercept + A * exp(-((x - μ) / σ)^2 / 2)
 end
 
 # slope fixed at 0.1 → 4 free: p = [intercept, A, μ, σ]
@@ -73,16 +67,6 @@ function complex_models()
     free, con
 end
 
-# all 11 params free:
-# p = [slope, intercept, ha.A, ha.μ, ha.σ, nr.A, nr.μ, nr.σ, nb.A, nb.μ, nb.σ]
-function hand_complex_free(p, x)
-    s, ic, hA, hμ, hσ, rA, rμ, rσ, bA, bμ, bσ = p
-    @. s * x + ic +
-       hA * exp(-((x - hμ) / hσ)^2 / 2) +
-       rA * exp(-((x - rμ) / rσ)^2 / 2) +
-       bA * exp(-((x - bμ) / bσ)^2 / 2)
-end
-
 # bounds + 6 ties → 5 free:  p = [slope, intercept, ha.A, ha.μ, ha.σ]
 # ties baked in: nii_b.A = A/3, nii_r.A = 3.06/3·A, centroids via λ-ratios, σ shared
 function hand_complex_con(p, x)
@@ -100,12 +84,12 @@ end
 # ===========================================================================
 # Part B — scaling sweep: sum of N Gaussians, built programmatically.
 #
-# free: all 3N params free.
-# con : @bound g1.amplitude, and @tie gᵢ.amplitude = g1.amplitude·0.5 (i>1)
-#       → 2N+1 free. The @model/@constrain blocks are assembled as Exprs and
-#       eval'd once per N, so the macros resolve names→optics for us (no manual
-#       optic building, and no handwritten kernel whose param layout would have
-#       to track spec order at every N).
+# con: @bound g1.amplitude, and @tie gᵢ.amplitude = g1.amplitude·0.5 (i>1)
+#      → 2N+1 free. The @model/@constrain blocks are assembled as Exprs and
+#      eval'd once per N, so the macros resolve names→optics for us.
+#
+# AstroFit's constrained parameter order for this generated tree is:
+#   [g1.mean, g1.sigma, g2.mean, g2.sigma, ..., gN.mean, gN.sigma, g1.amplitude]
 # ===========================================================================
 
 function nbump_models(N)
@@ -126,4 +110,16 @@ function nbump_models(N)
             (_free, _con)
         end
     end)
+end
+
+function hand_nbump_con(p, x, N)
+    A = p[2N + 1]
+    y = zero.(x)
+    for i in 1:N
+        μ = p[2i - 1]
+        σ = p[2i]
+        Ai = i == 1 ? A : 0.5 * A
+        y .+= @. Ai * exp(-((x - μ) / σ)^2 / 2)
+    end
+    y
 end

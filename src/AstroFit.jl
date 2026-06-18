@@ -20,7 +20,7 @@ export Free, Fixed, Bounded, Tied
 export render, render!
 export CompiledModel, ComponentRef, compile, withparams, resolve
 export free_lenses, gather, scatter, bounds_vectors, nfree, freevals, paramvector
-export logprior, logposterior
+export logprior, logposterior, objective
 export @model, @constrain
 export @set                      # re-exported from Accessors
 export ConstantBackground1D, LinearContinuum1D

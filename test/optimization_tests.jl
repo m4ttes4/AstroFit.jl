@@ -1,6 +1,7 @@
 @testitem "Optimization extension: MLE recovery via native solve" tags=[:optimization, :extension] begin
     using AstroFit
     using Optimization, OptimizationOptimJL
+    using ForwardDiff   # co-triggers AstroFitOptimizationExt (default AutoForwardDiff)
     using Optimization.SciMLBase: successful_retcode
 
     truth = @model begin
@@ -30,6 +31,7 @@ end
 @testitem "Optimization extension: bounded fit passes lb/ub" tags=[:optimization, :extension] begin
     using AstroFit
     using Optimization, OptimizationOptimJL
+    using ForwardDiff   # co-triggers AstroFitOptimizationExt (default AutoForwardDiff)
     using Optimization.SciMLBase: successful_retcode
 
     truth = @model begin
@@ -67,6 +69,7 @@ end
 @testitem "Optimization extension: unweighted least-squares (err omitted)" tags=[:optimization, :extension] begin
     using AstroFit
     using Optimization, OptimizationOptimJL
+    using ForwardDiff   # co-triggers AstroFitOptimizationExt (default AutoForwardDiff)
 
     truth = @model begin
         g = Gaussian1D(amplitude=2.0, mean=0.5, sigma=1.2)
@@ -80,9 +83,9 @@ end
         g
     end
 
-    # objective is the plain sum of squared residuals
+    # objective is the negative unit-variance log-likelihood (∝ least squares)
     optf = OptimizationFunction(cm, x, y)
-    @test optf.f(paramvector(cm), nothing) == sum(abs2, render(cm, x) .- y)
+    @test optf.f(paramvector(cm), nothing) == -AstroFit.loglikelihood(cm, x, y, nothing)
 
     sol = solve(OptimizationProblem(cm, x, y), NelderMead())
     fit = withparams(cm, sol.u)
@@ -94,6 +97,7 @@ end
 @testitem "Optimization extension: priors yield MAP" tags=[:optimization, :extension] begin
     using AstroFit
     using Optimization, OptimizationOptimJL
+    using ForwardDiff   # co-triggers AstroFitOptimizationExt (default AutoForwardDiff)
     using Distributions
 
     truth = @model begin
@@ -123,6 +127,7 @@ end
 @testitem "Optimization extension: 2D fit with tuple coordinates" tags=[:optimization, :extension] begin
     using AstroFit
     using Optimization, OptimizationOptimJL
+    using ForwardDiff   # co-triggers AstroFitOptimizationExt (default AutoForwardDiff)
     using Optimization.SciMLBase: successful_retcode
 
     truth = @model begin
@@ -148,7 +153,7 @@ end
 
     # unweighted-branch plumbing: objective renders with both coordinates
     optf = OptimizationFunction(cm, (X, Y), data)
-    @test optf.f(paramvector(cm), nothing) == sum(abs2, render(cm, X, Y) .- data)
+    @test optf.f(paramvector(cm), nothing) == -AstroFit.loglikelihood(cm, (X, Y), data, nothing)
 
     prob = OptimizationProblem(cm, (X, Y), data, err)
     sol  = solve(prob, Fminbox(LBFGS()))
