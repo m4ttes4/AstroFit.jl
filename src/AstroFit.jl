@@ -22,6 +22,7 @@ export CompiledModel, ComponentRef, compile, withparams, resolve
 export free_lenses, gather, scatter, bounds_vectors, nfree, freevals, paramvector
 export logprior, logposterior, objective
 export @model, @constrain
+export @fix, @bound, @tie, @free, @prior
 export @set                      # re-exported from Accessors
 export ConstantBackground1D, LinearContinuum1D
 export EmissionLine1D, AbsorptionLine1D, EmissionDoublet1D

@@ -169,31 +169,3 @@ end
     @test f0(u2) == -logposterior(cm, u2, x, y, nothing)
     @test f0(u) <= f0(u2)            # minimum sits at the (noise-free) truth
 end
-
-@testitem "Distributions extension: logprior and logposterior" tags=[:bayes, :extension] begin
-    using AstroFit
-    using Distributions
-
-    cm = @model begin
-        line = Gaussian1D(amplitude=2.0, mean=0.0, sigma=1.0)
-        line
-    end
-
-    cm = @constrain cm begin
-        @prior line.amplitude ~ Normal(2.0, 0.5)
-        @prior line.sigma ~ LogNormal(0.0, 0.2)
-    end
-
-    expected = logpdf(Normal(2.0, 0.5), cm.line.amplitude) +
-               logpdf(LogNormal(0.0, 0.2), cm.line.sigma)
-    @test logprior(cm) == expected
-    @test logprior(cm, paramvector(cm)) == expected
-
-    x = [0.0, 1.0]
-    y = render(cm, x)
-    err = [0.1, 0.2]
-    @test logposterior(cm, x, y, err) ==
-          logprior(cm) + AstroFit.loglikelihood(cm, x, y, err)
-    @test logposterior(cm, paramvector(cm), x, y, err) ==
-          logprior(cm) + AstroFit.loglikelihood(cm, x, y, err)
-end

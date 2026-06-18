@@ -341,6 +341,76 @@ function _constrain(cm::CompiledModel, entries::Tuple, prior_entries::Tuple=())
     _compiled(model, merged, getfield(cm, :names), priors)
 end
 
+# ---------------------------------------------------------------------------
+# Clause shims — documentation + standalone guard
+#
+# @fix/@bound/@tie/@free/@prior are not independent operations: they are
+# clauses parsed directly from the AST inside @constrain (see the dispatch in
+# the @constrain macro below), which consumes them before they could ever
+# expand. These shim macros exist only so that (1) `?@fix` shows real help and
+# (2) writing a clause outside a @constrain block raises a clear error instead
+# of `UndefVarError: @fix not defined`.
+# ---------------------------------------------------------------------------
+
+_clause_outside_constrain(name) = error(
+    "`@$name` can only be used inside a `@constrain model begin … end` block")
+
+"""
+    @fix component.param = value
+    @fix component.param            # fix at current value
+
+Lock a parameter and remove it from the fit vector. **Only valid inside a
+`@constrain model begin … end` block** (see [`@constrain`](@ref)); used on its
+own it raises an error.
+"""
+macro fix(args...)
+    _clause_outside_constrain(:fix)
+end
+
+"""
+    @bound component.param in (lo, hi)
+
+Keep a parameter free but give it lower and upper bounds (checked immediately,
+no silent clamp). **Only valid inside a `@constrain model begin … end` block**
+(see [`@constrain`](@ref)); used on its own it raises an error.
+"""
+macro bound(args...)
+    _clause_outside_constrain(:bound)
+end
+
+"""
+    @tie target.param = expr(other.param, ...)
+
+Compute one parameter from one or more master parameters; the target is removed
+from the fit vector. **Only valid inside a `@constrain model begin … end` block**
+(see [`@constrain`](@ref)); used on its own it raises an error.
+"""
+macro tie(args...)
+    _clause_outside_constrain(:tie)
+end
+
+"""
+    @free component.param
+
+Release an existing constraint, returning the parameter to the fit vector.
+**Only valid inside a `@constrain model begin … end` block** (see
+[`@constrain`](@ref)); used on its own it raises an error.
+"""
+macro free(args...)
+    _clause_outside_constrain(:free)
+end
+
+"""
+    @prior component.param ~ Distribution(args...)
+
+Attach a statistical prior to a free parameter (stored separately from
+mechanical constraints). **Only valid inside a `@constrain model begin … end`
+block** (see [`@constrain`](@ref)); used on its own it raises an error.
+"""
+macro prior(args...)
+    _clause_outside_constrain(:prior)
+end
+
 """
     @constrain model begin
         @fix   component.param = value

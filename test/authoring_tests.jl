@@ -406,3 +406,27 @@ end
     g = ForwardDiff.gradient(loss, p)
     @test all(isfinite, g)
 end
+
+@testitem "clause shims: guarded outside @constrain" tags=[:authoring] begin
+    using AstroFit
+
+    # Used standalone (outside @constrain) each raises a clear error at expansion.
+    @test_throws ErrorException macroexpand(@__MODULE__, :(@fix a.sigma = 1.0))
+    @test_throws ErrorException macroexpand(@__MODULE__, :(@bound a.sigma in (0, 1)))
+    @test_throws ErrorException macroexpand(@__MODULE__, :(@tie a.sigma = b.sigma))
+    @test_throws ErrorException macroexpand(@__MODULE__, :(@free a.sigma))
+    @test_throws ErrorException macroexpand(@__MODULE__, :(@prior a.sigma ~ :positive))
+
+    # …but in-block usage is untouched: @constrain still consumes the clauses.
+    m = @model begin
+        a = Gaussian1D(amplitude=2.0, sigma=1.0)
+        b = Gaussian1D(amplitude=0.5, sigma=8.0)
+        a + b
+    end
+    cm = @constrain m begin
+        @fix a.amplitude = 1.0
+        @tie b.sigma = a.sigma
+    end
+    @test cm.a.amplitude == 1.0
+    @test cm.b.sigma == cm.a.sigma
+end

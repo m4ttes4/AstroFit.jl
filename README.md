@@ -315,6 +315,10 @@ cm = @constrain model begin
 end
 ```
 
+`@fix`, `@bound`, `@tie`, `@free` and `@prior` are clause macros that are only
+valid inside a `@constrain` block — each carries its own docstring (try `?@fix`),
+and using one outside `@constrain` raises an explanatory error.
+
 ### `@fix`
 
 Lock a parameter and remove it from the fit vector.
