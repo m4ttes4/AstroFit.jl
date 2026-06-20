@@ -1,28 +1,26 @@
 abstract type AbstractConstraint end
 
-struct Free{I} <: AbstractConstraint end
+# Position in the spec is identity: constraints carry no parameter index.
+# withparams (@generated) assigns p-slots by a compile-time walk in tree order.
 
-struct Fixed{T} <: AbstractConstraint
-    value::T
-end
-Fixed() = Fixed(nothing)
+# A free parameter — gets its own slot in p.
+struct Free <: AbstractConstraint end
 
-struct Bounded{I,T} <: AbstractConstraint
+# A free parameter constrained to [lower, upper].
+struct Bounded{T} <: AbstractConstraint
     lower::T
     upper::T
 end
-Bounded{I}(lower::T, upper::T) where {I,T} = Bounded{I,T}(lower, upper)
-Bounded{I}(lower, upper) where I = Bounded{I}(promote(lower, upper)...)
+Bounded(lower, upper) = Bounded(promote(lower, upper)...)
 
-struct Tied{Is,F} <: AbstractConstraint
+# A parameter pinned to a constant — consumes no slot in p.
+struct Fixed{T} <: AbstractConstraint
+    value::T
+end
+
+# value = f(master₁ … masterₙ). Masters are referenced by path and must be free.
+# Paths live in the type so the @generated withparams can read them (decision 8).
+struct Tied{Paths,F} <: AbstractConstraint
     f::F
 end
-Tied{Is}(f::F) where {Is,F} = Tied{Is,F}(f)
-
-resolve(::Free{I}, p) where I = p[I]
-resolve(c::Fixed, _) = c.value
-resolve(::Bounded{I}, p) where I = p[I]
-@generated function resolve(c::Tied{Is}, p) where Is
-    args = [:(p[$i]) for i in Is]
-    :(c.f($(args...)))
-end
+Tied(paths::Tuple, f::F) where {F} = Tied{paths,F}(f)
