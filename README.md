@@ -66,28 +66,28 @@ spec = @model begin
 end
 
 # Add physical constraints
-fit = @constrain spec begin
-    @fix   ha.mean = 6563.0
-    @bound ha.amplitude 0 Inf
-    @bound ha.sigma     0.1 Inf
+@constrain spec begin
+    ha.mean = 6563.0
+    ha.amplitude in (0, Inf)
+    ha.sigma     in (0.1, Inf)
 end
 
 # Build a loss function and fit
 wavelengths = collect(6540.0:0.5:6590.0)
-observed = render(withparams(fit, params(fit)), wavelengths)
+observed = render(spec, wavelengths)
 
-loss(p) = sum(abs2, render(withparams(fit, p), wavelengths) .- observed)
+loss(p) = sum(abs2, render(withparams(spec, p), wavelengths) .- observed)
 
 using ForwardDiff
-ForwardDiff.gradient(loss, params(fit))
+ForwardDiff.gradient(loss, params(spec))
 ```
 
 What happened:
 
 - `@model` created a named, composable model tree.
-- `@constrain` added bounds and a fix.
-- `params(fit)` and `bounds(fit)` give the optimizer its starting point and box.
-- `withparams(fit, p)` rebuilds the bare model tree from a flat parameter vector.
+- `@constrain` added bounds and a fix — auto-rebinding `spec` in place.
+- `params(spec)` and `bounds(spec)` give the optimizer its starting point and box.
+- `withparams(spec, p)` rebuilds the bare model tree from a flat parameter vector.
 
 ---
 
@@ -174,36 +174,37 @@ masters must be `Free` or `Bounded` — no chaining.
 
 ### Standalone constraint verbs
 
-`@fix`, `@bound`, `@free`, and `@tie` each edit one parameter and return a new
-`CompiledModel` (the original is untouched — rebind to keep the result):
+`@fix`, `@bound`, `@free`, `@tie`, and `@prior` each edit one parameter and
+auto-rebind the model variable:
 
 ```julia
-s = @fix   spec.ha.mean = 6563.0
-s = @bound s.ha.amplitude 0 Inf
-s = @free  s.cont.slope
-s = @tie   s.n6583.amplitude = 2.96 * s.n6548.amplitude
+@fix   spec.ha.mean = 6563.0              # pin to a constant
+@bound spec.ha.amplitude in (0, Inf)      # confine to [0, ∞)
+@free  spec.cont.slope                    # release back to free
+@tie   spec.n6583.amplitude -> 2.96 * spec.n6548.amplitude   # fixed ratio
 ```
 
 ### `@constrain` block
 
-For more than one or two edits, `@constrain cm begin … end` is the ergonomic
-form: leaf names are bare, edits are threaded, a parameter constrained twice is a
-compile-time error, and the whole model is validated at the end:
+For more than one or two edits, `@constrain m begin … end` is the ergonomic
+form: leaf names are bare, each constraint has its own operator (no `@verb`
+prefix except `@free`), a parameter constrained twice is a compile-time error,
+and the whole model is validated at the end:
 
 ```julia
-fit = @constrain spec begin
-    @fix   ha.mean    = 6563.0
-    @fix   n6548.mean = 6548.0
-    @fix   n6583.mean = 6583.0
-    @bound ha.amplitude    0 Inf
-    @bound n6548.amplitude 0 Inf
-    @tie   n6548.sigma     = ha.sigma
-    @tie   n6583.sigma     = ha.sigma
-    @tie   n6583.amplitude = 2.96 * n6548.amplitude
+@constrain spec begin
+    ha.mean    = 6563.0                    # fix
+    n6548.mean = 6548.0
+    n6583.mean = 6583.0
+    ha.amplitude    in (0, Inf)            # bound
+    n6548.amplitude in (0, Inf)
+    n6548.sigma     -> ha.sigma            # tie
+    n6583.sigma     -> ha.sigma
+    n6583.amplitude -> 2.96 * n6548.amplitude
 end
 
-nfree(fit)        # 5
-paramnames(fit)   # [:cont_slope, :cont_intercept, :ha_amplitude, :ha_sigma, :n6548_amplitude]
+nfree(spec)        # 5
+paramnames(spec)   # [:cont_slope, :cont_intercept, :ha_amplitude, :ha_sigma, :n6548_amplitude]
 ```
 
 ### Low-level engine
@@ -319,18 +320,18 @@ spec = @model begin
     cont + line
 end
 
-fit = @constrain spec begin
-    @bound line.amplitude 0 Inf
-    @bound line.sigma     0.1 Inf
+@constrain spec begin
+    line.amplitude in (0, Inf)
+    line.sigma     in (0.1, Inf)
 end
 
 λ = collect(-5.0:0.1:5.0)
-y = render(withparams(fit, params(fit)), λ) .+ 0.01 .* randn(length(λ))
+y = render(withparams(spec, params(spec)), λ) .+ 0.01 .* randn(length(λ))
 
-prob = OptimizationProblem(fit, λ, y)
+prob = OptimizationProblem(spec, λ, y)
 sol  = solve(prob, Optim.Fminbox(Optim.LBFGS()))
 
-best = withparams(fit, sol.u)
+best = withparams(spec, sol.u)
 ```
 
 `OptimizationProblem(cm, x, y)` uses `params(cm)` as the starting point and
@@ -342,8 +343,8 @@ problem directly.
 customise the AD backend or build the problem yourself:
 
 ```julia
-optf = OptimizationFunction(fit, λ, y; adtype = AutoForwardDiff())
-prob = OptimizationProblem(optf, params(fit); lb, ub)
+optf = OptimizationFunction(spec, λ, y; adtype = AutoForwardDiff())
+prob = OptimizationProblem(optf, params(spec); lb, ub)
 ```
 
 ---

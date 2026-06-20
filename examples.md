@@ -129,49 +129,60 @@ one slot; its masters must themselves be free (`Free`/`Bounded`) — no chaining
 
 ## 7. Constraint verbs (standalone)
 
-`@fix`, `@bound`, `@free`, and `@tie` each edit one parameter and return a **new**
-`CompiledModel` (the original is untouched — rebind to keep the result):
+`@fix`, `@bound`, `@free`, `@tie`, and `@prior` each edit one parameter and
+**auto-rebind** the model variable (no `s = @fix s...` needed):
 
 ```julia
-s = @fix   spec.ha.mean = 6563.0          # pin to a constant
-s = @bound s.ha.amplitude 0 Inf           # confine to [0, ∞)  (emission ⇒ ≥ 0)
-s = @free  s.cont.slope                   # release back to free
-s = @tie   s.n6583.amplitude = 2.96 * s.n6548.amplitude   # fixed line ratio
+@fix   spec.ha.mean = 6563.0              # pin to a constant
+@bound spec.ha.amplitude in (0, Inf)      # confine to [0, ∞)  (emission ⇒ ≥ 0)
+@free  spec.cont.slope                    # release back to free
+@tie   spec.n6583.amplitude -> 2.96 * spec.n6548.amplitude   # fixed line ratio
+@fix   spec.ha.mean                       # fix at the current value
 ```
 
-`@tie` reads its master parameters from the right-hand side; any other value in
-the expression (like the literal `2.96`) is an ordinary coefficient. Note: a
-coefficient that is a *variable* is captured **live**, not frozen — use a literal
-or a `const`, since a reassigned captured variable both tracks later changes and
-deoptimizes the hot path.
+Each verb has its own operator: `=` for fix, `in (lo, hi)` for bound, `->` for
+tie, `~` for prior (see §8). `@tie` reads its master parameters from the
+right-hand side; any other value in the expression (like the literal `2.96`) is
+an ordinary coefficient. Note: a coefficient that is a *variable* is captured
+**live**, not frozen — use a literal or a `const`, since a reassigned captured
+variable both tracks later changes and deoptimizes the hot path.
 
 ## 8. `@constrain`: a block of edits
 
-For more than one or two edits, `@constrain cm begin … end` is the ergonomic form:
-leaf names are bare (the model is implicit), edits are threaded for you, a
-parameter constrained twice is a **compile-time error**, and the whole model is
-validated at the end (so a tie broken by a later edit is caught):
+For more than one or two edits, `@constrain m begin … end` is the ergonomic form:
+leaf names are bare (the model is implicit), each constraint type has its own
+operator (no `@verb` prefix needed except `@free`), a parameter constrained twice
+is a **compile-time error**, and the whole model is validated at the end:
 
 ```julia
-fit = @constrain spec begin
-    @fix   ha.mean    = 6563.0            # known rest wavelengths
-    @fix   n6548.mean = 6548.0
-    @fix   n6583.mean = 6583.0
-    @bound ha.amplitude    0 Inf          # emission lines are non-negative
-    @bound n6548.amplitude 0 Inf
-    @tie   n6548.sigma     = ha.sigma     # all lines share one velocity width
-    @tie   n6583.sigma     = ha.sigma
-    @tie   n6583.amplitude = 2.96 * n6548.amplitude   # fixed [NII] atomic ratio
+@constrain spec begin
+    ha.mean    = 6563.0            # fix: known rest wavelengths
+    n6548.mean = 6548.0
+    n6583.mean = 6583.0
+    ha.amplitude    in (0, Inf)    # bound: emission lines are non-negative
+    n6548.amplitude in (0, Inf)
+    n6548.sigma     -> ha.sigma    # tie: all lines share one velocity width
+    n6583.sigma     -> ha.sigma
+    n6583.amplitude -> 2.96 * n6548.amplitude   # tie: fixed [NII] atomic ratio
 end
 
-nfree(fit)        # 5
-paramnames(fit)   # [:cont_slope, :cont_intercept, :ha_amplitude, :ha_sigma, :n6548_amplitude]
+nfree(spec)        # 5
+paramnames(spec)   # [:cont_slope, :cont_intercept, :ha_amplitude, :ha_sigma, :n6548_amplitude]
 ```
+
+| Syntax in block | Meaning |
+|-----------------|---------|
+| `leaf.field` | fix at current value |
+| `leaf.field = value` | fix at explicit value |
+| `leaf.field in (lo, hi)` | bound |
+| `leaf.field -> expression` | tie |
+| `leaf.field ~ distribution` | prior (requires Distributions.jl) |
+| `@free leaf.field` | release to free |
 
 The doublet ratio and shared width now hold automatically in the rebuilt model:
 
 ```julia
-m = withparams(fit, params(fit))
+m = withparams(spec, params(spec))
 m.right.amplitude ≈ 2.96 * m.left.right.amplitude   # [NII] 6583 = 2.96 × 6548
 ```
 

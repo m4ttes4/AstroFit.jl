@@ -61,34 +61,26 @@ function _flatten!(acc, node, op)
 end
 
 # --- the tree view
-function Base.show(io::IO, ::MIME"text/plain", l::Leaf)
-    counts = _counts(l)
-    printstyled(io, "Leaf"; bold = true)
-    printstyled(io, "  ·  "; color = :light_black)
-    _stat(io, counts.free, "free", :green)
-    printstyled(io, "  ·  "; color = :light_black)
-    _stat(io, counts.bounds, "bounds", :blue)
-    printstyled(io, "  ·  "; color = :light_black)
-    _stat(io, counts.fixed, "fixed", :red)
-    printstyled(io, "  ·  "; color = :light_black)
-    _stat(io, counts.tied, "tied", _TIED_COLOR)
+function _header(io, title, counts)
+    printstyled(io, title; bold = true)
+    for (n, label, color) in ((counts.free, "free", :green),
+                              (counts.bounds, "bounds", :blue),
+                              (counts.fixed, "fixed", :red),
+                              (counts.tied, "tied", _TIED_COLOR))
+        printstyled(io, "  ·  "; color = :light_black)
+        _stat(io, n, label, color)
+    end
     println(io)
+end
+
+function Base.show(io::IO, ::MIME"text/plain", l::Leaf)
+    _header(io, "Leaf", _counts(l))
     _tree(io, l, "", true, true)
 end
 
 function Base.show(io::IO, ::MIME"text/plain", cm::CompiledModel)
     tree = getfield(cm, :tree)
-    counts = _counts(cm)
-    printstyled(io, "CompiledModel"; bold = true)
-    printstyled(io, "  ·  "; color = :light_black)
-    _stat(io, counts.free, "free", :green)
-    printstyled(io, "  ·  "; color = :light_black)
-    _stat(io, counts.bounds, "bounds", :blue)
-    printstyled(io, "  ·  "; color = :light_black)
-    _stat(io, counts.fixed, "fixed", :red)
-    printstyled(io, "  ·  "; color = :light_black)
-    _stat(io, counts.tied, "tied", _TIED_COLOR)
-    println(io)
+    _header(io, "CompiledModel", _counts(cm))
     print(io, "formula: ")
     println(io, _expr(tree))
     _tree(io, tree, "", true, true)
@@ -101,9 +93,9 @@ end
 
 function _tree(io, node, prefix, islast, isroot = false)
     isroot || print(io, prefix, islast ? "└─ " : "├─ ")
+    child = isroot ? prefix : prefix * (islast ? "   " : "│  ")
     if node isa Leaf
         _leafline(io, node); println(io)
-        child = isroot ? prefix : prefix * (islast ? "   " : "│  ")
         fields = fieldnames(typeof(node.model))
         isempty(fields) && return
         width = maximum(length(string(f)) for f in fields)
@@ -113,7 +105,6 @@ function _tree(io, node, prefix, islast, isroot = false)
         end
     else
         printstyled(io, _opsym(node), "\n"; color = :light_black, bold = true)
-        child = isroot ? prefix : prefix * (islast ? "   " : "│  ")
         kids = _kids(node)
         for (i, k) in enumerate(kids)
             _tree(io, k, child, i == length(kids))

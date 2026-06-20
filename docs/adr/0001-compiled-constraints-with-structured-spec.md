@@ -149,18 +149,20 @@ Bounded (exist and free), throwing `ArgumentError` otherwise; it subsumes cycle 
 the macro layer — not per-edit, so a forward tie whose master is fixed-then-freed in one
 batch isn't wrongly rejected.
 
-The constraint macros (`src/macro.jl`) lower to that engine. The verbs `@fix`/`@bound`/
-`@free`/`@tie` are pure (`@set`-style: return a new `CompiledModel`, user rebinds) and
-emit `setconstraint(cm, :leaf, :field, …)`; a single `_verb` function maps verb→constraint
-so the verbs and the block share it. `@tie cm.g2.x = f(cm.g1.y, …)` walks the RHS,
-turning each `cm.leaf.field` master into a fresh lambda argument (paths collected in order,
-non-path code left intact). **Master variables are captured *live*, not frozen** — the
-lambda closes over caller bindings by reference, so a literal/`const` coefficient is what
-you get either way, but a captured *reassigned* variable both tracks later changes and
-boxes, breaking the zero-alloc hot path (use a literal or `const`). `@constrain cm begin … end`
-is the ergonomic block: bare leaf names (a gensym root is injected so they reduce to the
-deep form one splitter handles), threads the verbs, rejects a **duplicate target at
-expansion time**, and runs `validate` once at the end. Standalone duplicate edits are
-last-wins (intended iterative editing). Verified: a macro-generated literal tie stays
+The constraint macros (`src/macro.jl`) lower to that engine. Each standalone verb
+(`@fix`, `@bound`, `@free`, `@tie`, `@prior`) has a distinct operator and **auto-rebinds**
+the model variable (no `m = @fix m…` needed): `@fix m.l.f = v` or `@fix m.l.f` (current
+value), `@bound m.l.f in (lo, hi)`, `@tie m.l.f -> expr`, `@prior m.l.f ~ dist`,
+`@free m.l.f`. `@tie m.g2.x -> f(m.g1.y, …)` walks the RHS, turning each `m.leaf.field`
+master into a fresh lambda argument (paths collected in order, non-path code left intact —
+function calls, arithmetic, and constants are preserved). **Master variables are captured
+*live*, not frozen** — the lambda closes over caller bindings by reference, so a
+literal/`const` coefficient is what you get either way, but a captured *reassigned* variable
+both tracks later changes and boxes, breaking the zero-alloc hot path (use a literal or
+`const`). `@constrain m begin … end` is the ergonomic block: leaf names are bare (a gensym
+root is injected), each line is dispatched by AST shape (no `@verb` prefix except `@free`):
+`=` → fix, `->` → tie, `in` → bound, `~` → prior, bare path → fix-at-current. The block
+rejects a **duplicate target at expansion time**, auto-rebinds the model variable, and
+runs `validate` once at the end. Verified: a macro-generated literal tie stays
 `@allocated == 0` and `@inferred`; the block catches both a duplicate target and a tie
 broken by a later edit.
