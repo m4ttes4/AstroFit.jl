@@ -9,12 +9,21 @@ but they quickly become hard to reuse. AstroFit gives you composable models and
 keeps the fitting hot path close to handwritten speed by compiling parameter
 scatter and tie resolution into generated, straight-line code.
 
-> [!WARNING]
-> AstroFit is a working proof of concept, not a production-ready package. It
-> works for the workflows I built it for, but the API, documentation, and test
-> coverage should still be treated as experimental. I wrote and maintain the
-> repository myself, and AI assistance played an important role while designing
-> the generated-function internals that make `withparams` fast.
+This small library comes from liking the model-composition style of
+[Astropy modeling](https://docs.astropy.org/en/stable/modeling/) and
+[lmfit](https://lmfit.github.io/lmfit-py/), while wanting to push the same idea
+through Julia's type system and compiler. The `AccessibleModels` repository was
+also an important design inspiration: its emphasis on composable, inspectable
+model objects helped shape the API direction here.
+
+<div style="border: 1px solid #d29922; border-left: 4px solid #d29922; border-radius: 6px; padding: 0.75rem 1rem; margin: 1rem 0;">
+<strong>Warning.</strong> AstroFit is a working proof of concept, not a
+production-ready package. It works for the workflows I built it for, but the API,
+documentation, and test coverage should still be treated as experimental. I
+wrote and maintain the repository myself, and AI assistance played an important
+role while designing the generated-function internals that make
+<code>withparams</code> fast.
+</div>
 
 - Define reusable model components with clear names.
 - Attach physical constraints with `@constrain`.
@@ -32,6 +41,7 @@ scatter and tie resolution into generated, straight-line code.
 - [Working With Parameters](#working-with-parameters)
 - [Fitting](#fitting)
 - [Optimization.jl Integration](#optimizationjl-integration)
+- [Future Progress](#future-progress)
 - [Benchmarks](#benchmarks)
 - [Real Examples](#real-examples)
 - [Extending AstroFit](#extending-astrofit)
@@ -51,6 +61,8 @@ constraints with runtime lookups, but that can add overhead in the fitting loop.
 
 AstroFit aims for the useful middle ground: write models as reusable pieces,
 express the constraints explicitly, then let Julia compile the resolved hot path.
+The model object stays readable and inspectable, while the inner fitting loop is
+just `withparams(cm, p)` plus `render`.
 
 ---
 
@@ -245,6 +257,11 @@ model = withparams(spec, params(spec))
 re-resolves all tied parameters, and returns the **bare** model tree (Leaf
 wrappers stripped). This is the function you call inside the fitting loop.
 
+For example, if `n6583.amplitude -> 2.96 * n6548.amplitude`, the optimizer never
+sees a separate `n6583_amplitude` slot. `withparams` rebuilds a plain model where
+that field has already been computed from `n6548_amplitude`, so `render` does not
+need to know about constraints.
+
 ---
 
 ## Fitting
@@ -347,6 +364,28 @@ customise the AD backend or build the problem yourself:
 optf = OptimizationFunction(spec, λ, y; adtype = AutoForwardDiff())
 prob = OptimizationProblem(optf, params(spec); lb, ub)
 ```
+
+---
+
+## Future Progress
+
+Bayesian analysis is a natural next step for AstroFit, and it should not require
+a different model layer. The core pieces are already present: parameters are a
+flat vector, `loglikelihood` and `logposterior` work on that vector, and priors
+are already supported through `Distributions.jl` objects:
+
+```julia
+using Distributions
+
+@constrain spec begin
+    line.sigma ~ LogNormal(0.0, 0.5)
+end
+```
+
+What is still missing is integration glue for samplers. In practice that means
+writing small extensions that expose AstroFit models to Pigeons.jl and similar
+Bayesian libraries, mapping their parameter vectors into `logposterior(cm, p, x,
+y, err)` and carrying `paramnames(cm)` through to the sampled output.
 
 ---
 
@@ -534,5 +573,162 @@ Rules for custom models:
 - define scalar `render(m::YourModel, x::Number)`;
 - accept `Number`, not only `Float64`, so ForwardDiff dual values work;
 - let AstroFit handle composition, naming, constraints, and `withparams`.
+
+---
+
+## Internal Design
+
+The internal architecture is documented in more detail in:
+
+- [`CONTEXT.md`](CONTEXT.md) — domain language and key concepts.
+- [`docs/adr/0001`](docs/adr/0001-compiled-constraints-with-structured-spec.md) — design decisions for the compiled-constraints refactor.
+
+### Structure
+
+`CompiledModel` has two fields:
+
+- `tree`: one annotated model tree.
+- `priors`: optional statistical priors, stored separately from mechanical constraints.
+
+The tree is built from the same compound operator nodes used by ordinary models
+(`Sum`, `Difference`, `Product`, `Quotient`, `Pipe`). The leaves are
+`Leaf{name}` wrappers. Each leaf stores the user component and a tuple of
+constraints aligned with that component's fields.
+
+```mermaid
+flowchart TB
+    CM["CompiledModel{T,P}"]
+    CM --> TREE["tree::T"]
+    CM --> PRIORS["priors::P"]
+
+    TREE --> SUM["Sum / Difference / Product / Quotient / Pipe"]
+    SUM --> LEFT["left subtree"]
+    SUM --> RIGHT["right subtree"]
+
+    LEFT --> LEAF1["Leaf{:cont}"]
+    RIGHT --> LEAF2["Leaf{:ha}"]
+
+    LEAF1 --> MODEL1["model::Linear1D"]
+    LEAF1 --> CONS1["constraints::Tuple<br/>Free, Free"]
+
+    LEAF2 --> MODEL2["model::Gaussian1D"]
+    LEAF2 --> CONS2["constraints::Tuple<br/>Bounded, Fixed, Bounded"]
+```
+
+For a model like:
+
+```julia
+spec = @model begin
+    cont = Linear1D(0.0, 1.0)
+    ha   = Gaussian1D(5.0, 6563.0, 2.0)
+    cont + ha
+end
+```
+
+the stored tree is conceptually:
+
+```text
+CompiledModel
+└─ tree = Sum(
+       Leaf{:cont}(Linear1D(...), (Free(), Free())),
+       Leaf{:ha}(Gaussian1D(...), (Free(), Free(), Free())),
+   )
+```
+
+After constraints, only the leaf constraint tuples change; the algebraic tree
+shape does not need a parallel specification object. This is the main invariant:
+the model values and constraint metadata live in one structure, so there is no
+separate registry/spec tree that can drift out of sync.
+
+### Parameter Slots
+
+`params`, `bounds`, and `paramnames` all walk the annotated tree in the same
+left-to-right order:
+
+1. Visit the left subtree before the right subtree.
+2. Inside each leaf, visit fields in the order defined by the model struct.
+3. Count only `Free` and `Bounded` fields as optimizer slots.
+
+That gives one flat vector for optimizers:
+
+```julia
+p0 = params(spec)
+lo, hi = bounds(spec)
+names = paramnames(spec)
+```
+
+`Fixed` fields do not get slots. `Tied` fields also do not get slots; they are
+computed from one or more free/bounded master parameters.
+
+### Generated `withparams`
+
+`withparams(cm, p)` is the hot path. It is an `@generated` function because the
+tree type encodes the leaf names, model types, and constraint types. At
+specialization time, AstroFit can inspect that type and emit straight-line code
+for this exact model layout.
+
+The generated function does two compile-time passes over the tree type:
+
+1. Build a slot map:
+   `(:ha, :amplitude) => 3`, `(:ha, :sigma) => 4`, and so on.
+2. Emit reconstruction code for the bare model tree:
+   - `Free` / `Bounded` fields become `p[k]`.
+   - `Fixed` fields read the stored fixed value.
+   - `Tied` fields call their stored function on the master slots.
+
+Conceptually, this:
+
+```julia
+withparams(spec, p)
+```
+
+turns into code shaped like:
+
+```julia
+Sum(
+    Linear1D(p[1], p[2]),
+    Gaussian1D(p[3], 6563.0, p[4]),
+)
+```
+
+for a model where `ha.mean` is fixed at `6563.0`. A tie such as:
+
+```julia
+n6583.amplitude -> 2.96 * n6548.amplitude
+```
+
+emits code equivalent to:
+
+```julia
+Gaussian1D(2.96 * p[k_n6548_amp], ...)
+```
+
+There is no runtime dictionary lookup, name resolution, or constraint dispatch
+inside the fit loop. `withparams` returns the bare compound model tree, with
+`Leaf` wrappers stripped, so the next call is normal Julia dispatch:
+
+```julia
+render(withparams(spec, p), x)
+```
+
+This is also why custom models should accept `Number` fields and coordinates:
+ForwardDiff dual values flow through the generated reconstruction and into
+`render` without special cases.
+
+### Constraint Edits
+
+Constraints are edited immutably. `setconstraint(cm, :ha, :sigma, Bounded(...))`
+finds the target leaf, swaps one entry in that leaf's constraint tuple, and
+rebuilds only the path from the root to that leaf. No parameter indices are
+stored in constraints, so editing a constraint does not require renumbering the
+whole model.
+
+`validate(cm)` checks global rules after edits:
+
+- every `Tied` master must exist;
+- every `Tied` master must be free or bounded;
+- ties cannot point to fixed or tied targets.
+
+The macro layer runs validation once at the end of a `@constrain` block.
 
 ---
