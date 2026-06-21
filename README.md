@@ -491,16 +491,19 @@ the full script.
 
 ### Redshifted galaxy spectrum flagship fit (1D)
 
-This example fits a synthetic AGN host-galaxy spectrum around the
-Hα–[NII]–[SII] region. The model includes a linear + power-law continuum,
-narrow and broad Balmer emission (Hα, Hβ), forbidden lines ([OIII], [NII],
-[SII]), and Na D absorption — all redshifted to the observer frame.
+This is the kind of fit I built AstroFit for. The spectrum is a synthetic AGN
+host-galaxy covering the Hα–[NII]–[SII] window — the region where you typically
+have the most going on at once: a curved continuum (linear + power law), narrow
+Balmer emission from the host (Hα, Hβ), broad Balmer components from the AGN,
+forbidden-line doublets ([OIII] 4959/5007, [NII] 6548/6583, [SII] 6716/6731),
+Na D absorption, and a redshift that moves everything to the observer frame.
 
-The physics sets most of the constraints: doublet ratios ([OIII] 4959/5007,
-[NII] 6548/6583, Na D) are fixed to their atomic values, Balmer decrements tie
-Hβ to Hα, all narrow lines share one velocity width, and both broad components
-share another. Rest wavelengths are fixed. What starts as 43 raw parameters
-collapses to 15 free ones — the optimizer only sees what actually varies.
+The model has 43 raw parameters, but most of them aren't independent. Doublet
+ratios like [OIII] and [NII] are set by atomic physics, Hβ is tied to Hα through
+the Balmer decrement, all narrow lines share one velocity width, broad lines
+share another, and rest wavelengths don't move. Once you write those constraints
+down, only 15 parameters are actually free — and those are the only ones the
+optimizer touches.
 
 ```julia
 cm = @model begin
