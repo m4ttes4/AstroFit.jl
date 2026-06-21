@@ -20,12 +20,11 @@ straight-line code rather than runtime constraint lookup.
 ## Run
 
 ```bash
-cd /home/matteo/julia/AstroFit.jl
-julia --project=/home/matteo/.julia/environments/v1.12 bench/benchmarks.jl
+julia --project=. bench/benchmarks.jl
 ```
 
-The script uses the Julia environment in `/home/matteo/.julia/environments/v1.12`,
-which provides AstroFit, BenchmarkTools and Plots. It prints tables with times,
+The script expects AstroFit, BenchmarkTools and Plots to be available in the
+active project environment. It prints tables with times,
 allocations and AstroFit/handwritten ratios, then writes two figures under
 `bench/results/<timestamp>` by default. Pass an output directory as the first
 argument, or set `ASTROFIT_BENCH_OUTDIR`, to choose a stable path without
