@@ -45,18 +45,24 @@ I started this because I missed the way [Astropy modeling](https://docs.astropy.
 
 ## Motivation
 
-Astrophysical models are rarely just independent parameters. A spectrum might
-need two emission lines to share a velocity width, a doublet to keep a fixed flux
-ratio, or a redshift component to move an entire rest-frame model.
+In astrophysics, parameters are rarely independent: two emission lines share a
+velocity width, a doublet has a fixed flux ratio, a redshift shifts the entire
+rest-frame model. Constraints are the rule, not the exception.
 
-You can hardcode those rules in one big Julia function. That is fast, but it
-does not compose well. You can also use a model-management layer that resolves
-constraints with runtime lookups, but that can add overhead in the fitting loop.
+You can write a monolithic Julia function that hardcodes everything. It's fast,
+but the moment you change the setup — add a line, drop a constraint — you end up
+rewriting half the code. Or you use a layer that resolves constraints with
+runtime lookups, but you pay that cost on every fit iteration.
 
-AstroFit aims for the useful middle ground: write models as reusable pieces,
-express the constraints explicitly, then let Julia compile the resolved hot path.
-The model object stays readable and inspectable, while the inner fitting loop is
-just `withparams(cm, p)` plus `render`.
+AstroFit tries to sit in the middle: write model components as reusable pieces,
+declare constraints explicitly, and let Julia compile the resolved path. The
+model stays inspectable and easy to modify, but the inner loop comes down to
+`withparams(cm, p)` plus `render` — no lookups, no overhead.
+
+Models are composed with binary operators (`+`, `*`, `|>`), a pattern common
+across fitting libraries because it makes the structure of a model immediately
+obvious: `continuum + line_ha + line_nii` reads like what it is. You see the
+physics, not the plumbing.
 
 ---
 
