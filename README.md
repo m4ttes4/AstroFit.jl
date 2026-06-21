@@ -73,37 +73,41 @@ physics, not the plumbing.
 
 ```julia
 using AstroFit
+using Optimization, OptimizationOptimJL, ForwardDiff
 
-# Define a two-component emission line model
+# 1. Noisy data: an emission line on a flat continuum
+λ        = collect(6540.0:0.5:6590.0)
+truth    = Const1D(value=1.0) + Gaussian1D(amplitude=5.0, mean=6563.0, sigma=2.0)
+observed = render(truth, λ) .+ 0.1 .* randn(length(λ))
+
+# 2. Build a model with a rough initial guess
 spec = @model begin
-    cont = Linear1D(0.0, 1.0)
-    ha   = Gaussian1D(5.0, 6563.0, 2.0)
+    cont = Const1D(value=0.5)
+    ha   = Gaussian1D(amplitude=3.0, mean=6560.0, sigma=3.0)
     cont + ha
 end
 
-# Add physical constraints
+# 3. Physical constraints: amplitude and width must be positive
 @constrain spec begin
-    ha.mean = 6563.0
     ha.amplitude in (0, Inf)
     ha.sigma     in (0.1, Inf)
 end
 
-# Build a loss function and fit
-wavelengths = collect(6540.0:0.5:6590.0)
-observed = render(spec, wavelengths)
+# 4. Fit — AstroFit builds the problem straight from the model and data
+prob = OptimizationProblem(spec, λ, observed)
+sol  = solve(prob, Optim.Fminbox(Optim.LBFGS()))
 
-loss(p) = sum(abs2, render(withparams(spec, p), wavelengths) .- observed)
-
-using ForwardDiff
-ForwardDiff.gradient(loss, params(spec))
+best = withparams(spec, sol.u)   # fitted model: recovers amplitude≈5, mean≈6563, sigma≈2
 ```
 
 What happened:
 
-- `@model` created a named, composable model tree.
-- `@constrain` added bounds and a fix — auto-rebinding `spec` in place.
-- `params(spec)` and `bounds(spec)` give the optimizer its starting point and box.
-- `withparams(spec, p)` rebuilds the bare model tree from a flat parameter vector.
+- `@model` built a named, composable model tree (`cont + ha`).
+- `@constrain` attached bounds in place, rebinding `spec`.
+- `OptimizationProblem(spec, λ, observed)` read `params(spec)` as the starting point
+  and `bounds(spec)` as the box, automatically.
+- `withparams(spec, sol.u)` rebuilt the fitted model — print it to see the tree
+  with its final values.
 
 ---
 
