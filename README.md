@@ -491,14 +491,16 @@ the full script.
 
 ### Redshifted galaxy spectrum flagship fit (1D)
 
-A larger synthetic AGN host-galaxy spectrum with a visibly curved power-law
-continuum, narrow Balmer lines, broad AGN Balmer components, [OIII], [NII],
-[SII], and Na D absorption. The model uses a custom redshift coordinate
-transform, redshift-dependent flux scaling, fixed atomic doublet ratios, shared
-narrow-line widths, tied broad-line widths, fixed rest wavelengths, bounded
-emission/absorption amplitudes, and a Gaussian likelihood through
-Optimization.jl. The result compresses 43 raw model fields to 15 free fitted
-parameters.
+This example fits a synthetic AGN host-galaxy spectrum around the
+Hα–[NII]–[SII] region. The model includes a linear + power-law continuum,
+narrow and broad Balmer emission (Hα, Hβ), forbidden lines ([OIII], [NII],
+[SII]), and Na D absorption — all redshifted to the observer frame.
+
+The physics sets most of the constraints: doublet ratios ([OIII] 4959/5007,
+[NII] 6548/6583, Na D) are fixed to their atomic values, Balmer decrements tie
+Hβ to Hα, all narrow lines share one velocity width, and both broad components
+share another. Rest wavelengths are fixed. What starts as 43 raw parameters
+collapses to 15 free ones — the optimizer only sees what actually varies.
 
 ```julia
 cm = @model begin
