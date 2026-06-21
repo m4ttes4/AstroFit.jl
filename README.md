@@ -327,14 +327,26 @@ to any Julia optimizer:
 
 AstroFit ships a package extension for
 [Optimization.jl](https://github.com/SciML/Optimization.jl). Loading
-`Optimization` and `ForwardDiff` together activates it — no extra import needed:
+`Optimization` and `ForwardDiff` together activates it — no extra import needed.
+
+First, some synthetic data to work with:
 
 ```julia
-using AstroFit, Optimization, ForwardDiff, OptimizationOptimJL
+using AstroFit
+
+λ = collect(-5.0:0.1:5.0)
+true_model = Const1D(1.0) + Gaussian1D(5.0, 0.0, 1.0)
+y = render(true_model, λ) .+ 0.01 .* randn(length(λ))
+```
+
+Now build a model with an initial guess, add constraints, and fit:
+
+```julia
+using Optimization, ForwardDiff, OptimizationOptimJL
 
 spec = @model begin
-    cont = Const1D(1.0)
-    line = Gaussian1D(5.0, 0.0, 1.0)
+    cont = Const1D(0.5)
+    line = Gaussian1D(3.0, 0.2, 1.5)
     cont + line
 end
 
@@ -343,22 +355,18 @@ end
     line.sigma     in (0.1, Inf)
 end
 
-λ = collect(-5.0:0.1:5.0)
-y = render(withparams(spec, params(spec)), λ) .+ 0.01 .* randn(length(λ))
-
 prob = OptimizationProblem(spec, λ, y)
 sol  = solve(prob, Optim.Fminbox(Optim.LBFGS()))
 
 best = withparams(spec, sol.u)
 ```
 
-`OptimizationProblem(cm, x, y)` uses `params(cm)` as the starting point and
-passes `bounds(cm)` as `lb`/`ub` when any parameter is bounded. An unbounded
-model omits the box so unconstrained solvers (BFGS, NelderMead) accept the
-problem directly.
+`OptimizationProblem(spec, λ, y)` extracts `params(spec)` as the starting point
+and `bounds(spec)` as `lb`/`ub` automatically. If no parameter is bounded, the
+box is omitted so unconstrained solvers (BFGS, NelderMead) work directly.
 
-`OptimizationFunction(cm, x, y)` is available separately if you need to
-customise the AD backend or build the problem yourself:
+If you need to control the AD backend or build the problem manually, use
+`OptimizationFunction` instead:
 
 ```julia
 optf = OptimizationFunction(spec, λ, y; adtype = AutoForwardDiff())
