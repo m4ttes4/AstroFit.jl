@@ -398,6 +398,49 @@ writing small extensions that expose AstroFit models to Pigeons.jl and similar
 Bayesian libraries, mapping their parameter vectors into `logposterior(cm, p, x,
 y, err)` and carrying `paramnames(cm)` through to the sampled output.
 
+### A `@component` macro for defining models
+
+The other thing I want to add is a macro for defining new model components. Right
+now, bringing your own model means writing the full boilerplate by hand — the
+`@kwdef struct`, a `promote` constructor, and a `render` method (see
+[Extending AstroFit](#extending-astrofit)). It is not hard, but it is the same
+four blocks every time, and it is the steepest part of the learning curve. I want
+that barrier gone.
+
+The idea is to let you declare a component from a single formula:
+
+```julia
+@component Gaussian1D(x; amplitude=1.0, mean=0.0, sigma=1.0) =
+    amplitude * exp(-((x - mean) / sigma)^2 / 2)
+
+@component Moffat1D(x; amplitude=1.0, mean=0.0, alpha=1.0, beta=1.0) =
+    amplitude * (1 + ((x - mean) / alpha)^2)^(-beta)
+```
+
+The coordinates come before the semicolon, the parameters (with their defaults)
+after it. From that one line the macro would generate everything the model
+protocol needs: the parametric `@kwdef struct <: AbstractModel`, the `promote`
+constructor that keeps the field types uniform, and the scalar `render` method
+(rewriting each bare parameter name into a field access on the model). I would
+not generate a hand-tuned `render!` — the generic broadcasting fallback already
+covers it, and the per-model loops in the zoo stay as opt-in micro-optimisations.
+
+The `Gaussian1D` line above expands to exactly what the built-in zoo models
+already are, so it drops straight into `@model`, `@constrain`, and the fitting
+path:
+
+```julia
+Base.@kwdef struct Gaussian1D{T<:Real} <: AbstractModel
+    amplitude::T = 1.0
+    mean::T = 0.0
+    sigma::T = 1.0
+end
+Gaussian1D(amplitude::Real, mean::Real, sigma::Real) =
+    Gaussian1D(promote(amplitude, mean, sigma)...)
+render(m::Gaussian1D, x::Number) =
+    m.amplitude * exp(-((x - m.mean) / m.sigma)^2 / 2)
+```
+
 ---
 
 ## Benchmarks
