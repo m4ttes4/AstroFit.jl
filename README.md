@@ -462,9 +462,41 @@ runtime lookup.
 
 ![AstroFit benchmark scaling](bench/scaling.png)
 
-The current result: constrained AstroFit rendering stays close to the
-hand-written baseline as models grow, while `withparams` remains tiny and
-allocation-free.
+The answer is essentially zero overhead, and it holds as the model grows. The
+plot sweeps a chain of `N` Gaussians where every amplitude past the first is tied
+to the first — so `N` submodels and `N-1` ties — and compares it against the
+hardcoded baseline over 400 points:
+
+| N (submodels / ties / free) | `withparams` alone | render(withparams) | handwritten | render! in place | ratio |
+|---|---|---|---|---|---|
+| 8 / 7 / 17    | 3.6 ns, 0 B  | 10.7 µs / 3.2 KB | 10.5 µs / 3.2 KB | 0 B | 1.01x |
+| 32 / 31 / 65  | 24 ns, 0 B   | 47.7 µs / 3.2 KB | 41.4 µs / 3.2 KB | 0 B | 1.15x |
+| 64 / 63 / 129 | 56 ns, 0 B   | 115.7 µs / 3.2 KB | 115.7 µs / 3.2 KB | 0 B | 1.00x |
+
+`withparams` is `@generated`, so the interesting work — scattering the flat `p`
+into the model and resolving fixed/tied parameters — happens at compile time by
+walking the tree *type*. What is left at runtime is unrolled straight-line code
+that builds immutable structs: no loops, no dictionary lookup, no dynamic
+dispatch. So it stays allocation-free and tiny even with 63 ties (56 ns at N=64),
+scaling roughly linearly with the number of fields. **The number of ties adds no
+allocation and no dispatch** — each tie is an inlined closure call resolved when
+the function is generated.
+
+The render itself tracks the handwritten baseline (1.01x at N=8, 1.00x at N=64);
+it is dominated by the `exp` calls, which both versions pay identically. The
+1.15x at N=32 is jitter, not a trend — it is gone again by N=64. At the µs scale
+there is run-to-run noise from how the two render paths vectorise, but no
+systematic divergence as ties grow.
+
+The only allocation is the output array itself — the same 3.2 KB any handwritten
+version pays. Use `render!` to write into a preallocated buffer and that
+disappears too (0 B at every N). The scalar hot path inside the fit (`_chi2` sums
+`render(model, x[i])` point by point) never allocates at all.
+
+Two caveats: this holds because everything stays type-stable and concrete —
+build the `CompiledModel` once outside the loop, not inside it. The ForwardDiff
+path stays clean: `p` becomes `Dual`, `withparams` rebuilds `Gaussian1D{Dual}`,
+still type-stable.
 
 See [`bench/README.md`](bench/README.md) for the benchmark script, command, and
 current numbers.
