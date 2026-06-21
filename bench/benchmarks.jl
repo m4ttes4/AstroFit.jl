@@ -17,16 +17,25 @@
 #   julia --project=/home/matteo/.julia/environments/v1.12 bench/benchmarks.jl
 #
 # Uses the Julia environment in /home/matteo/.julia/environments/v1.12.
-# It needs AstroFit, BenchmarkTools and Plots.
+# It needs AstroFit, BenchmarkTools and Plots. By default, figures are written
+# under bench/results/<timestamp>; pass an output directory as the first
+# argument, or set ASTROFIT_BENCH_OUTDIR, to choose a stable path.
 
 using AstroFit
 using BenchmarkTools
+using Dates
 using Printf
 
 include(joinpath(@__DIR__, "kernels.jl"))
 
 # Keep the script useful for quick local runs while still collecting medians.
 BenchmarkTools.DEFAULT_PARAMETERS.seconds = 0.75
+
+const OUTDIR = get(ENV, "ASTROFIT_BENCH_OUTDIR",
+                   get(ARGS, 1,
+                       joinpath(@__DIR__, "results",
+                                Dates.format(now(), "yyyymmdd_HHMMSS"))))
+mkpath(OUTDIR)
 
 stat(b) = (time = median(b).time, allocs = b.allocs, memory = b.memory)
 ratio(a, b) = a / b
@@ -47,8 +56,8 @@ function check_equivalent(label, astro_y, hand_y)
 end
 
 function benchmark_fixed(label, free_cm, con_cm, hand_con, x)
-    pf = paramvector(free_cm)
-    pc = paramvector(con_cm)
+    pf = AstroFit.params(free_cm)
+    pc = AstroFit.params(con_cm)
 
     astro_y = render(withparams(con_cm, pc), x)
     hand_y = hand_con(pc, x)
@@ -100,7 +109,7 @@ function make_sweep_cases(Ns)
     map(Ns) do N
         free_cm, con_cm = nbump_models(N)
         x = collect(range(0.0, N + 1.0; length = 200))
-        pc = paramvector(con_cm)
+        pc = AstroFit.params(con_cm)
         (N = N, free_cm = free_cm, con_cm = con_cm, x = x, pc = pc)
     end
 end
@@ -146,6 +155,7 @@ end
 
 println("AstroFit withparams overhead benchmarks")
 println("=======================================")
+println("output directory: ", OUTDIR)
 
 free_s, con_s = small_models()
 small = benchmark_fixed("Small constrained line (Linear1D + Gaussian1D)",
@@ -173,7 +183,8 @@ bar!(p_fixed[1], fixed_labels, fixed_ratios;
 hline!(p_fixed[1], [1.0]; color = :black, linestyle = :dash)
 bar!(p_fixed[2], fixed_labels, fixed_withparams;
      title = "withparams only", ylabel = "time [µs]")
-savefig(p_fixed, joinpath(@__DIR__, "fixed_complex.png"))
+fixed_path = joinpath(OUTDIR, "fixed_complex.png")
+savefig(p_fixed, fixed_path)
 
 Ns = [r.N for r in sweep]
 sweep_ratios = [r.render_ratio for r in sweep]
@@ -192,7 +203,8 @@ plot!(p_sweep[2], Ns, sweep_withparams; marker = :o, label = "withparams",
 plot!(p_sweep[3], Ns, [sweep_af sweep_hand]; marker = :o,
       label = ["AstroFit" "handwritten"], title = "constrained render",
       xlabel = "N Gaussians", ylabel = "time [µs]")
-savefig(p_sweep, joinpath(@__DIR__, "scaling.png"))
+sweep_path = joinpath(OUTDIR, "scaling.png")
+savefig(p_sweep, sweep_path)
 
-println("saved -> ", joinpath(@__DIR__, "fixed_complex.png"))
-println("saved -> ", joinpath(@__DIR__, "scaling.png"))
+println("saved -> ", fixed_path)
+println("saved -> ", sweep_path)

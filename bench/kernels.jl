@@ -25,11 +25,12 @@ function small_models()
         line = Gaussian1D(amplitude = 5.0, mean = 0.0, sigma = 1.5)
         cont + line
     end
-    con = @constrain free begin
-        @fix   cont.slope = 0.1
-        @bound line.amplitude in (0.0, Inf)
-        @bound line.mean      in (-5.0, 5.0)
-        @bound line.sigma     in (0.3, 10.0)
+    con = free
+    @constrain con begin
+        cont.slope = 0.1
+        line.amplitude in (0.0, Inf)
+        line.mean      in (-5.0, 5.0)
+        line.sigma     in (0.3, 10.0)
     end
     free, con
 end
@@ -52,17 +53,18 @@ function complex_models()
         nii_b = Gaussian1D(amplitude = 1.0,  mean = λ_NII_b, sigma = 3.0)
         cont + ha + nii_r + nii_b
     end
-    con = @constrain free begin
-        @bound cont.intercept in (0.0, Inf)
-        @bound ha.amplitude   in (0.0, Inf)
-        @bound ha.mean        in (λ_Ha - 30, λ_Ha + 30)
-        @bound ha.sigma       in (0.5, 20.0)
-        @tie   nii_b.amplitude = ha.amplitude / 3.0
-        @tie   nii_r.amplitude = (3.06 / 3.0) * ha.amplitude
-        @tie   nii_r.mean      = (λ_NII_r / λ_Ha) * ha.mean
-        @tie   nii_b.mean      = (λ_NII_b / λ_Ha) * ha.mean
-        @tie   nii_r.sigma     = ha.sigma
-        @tie   nii_b.sigma     = ha.sigma
+    con = free
+    @constrain con begin
+        cont.intercept in (0.0, Inf)
+        ha.amplitude   in (0.0, Inf)
+        ha.mean        in (λ_Ha - 30, λ_Ha + 30)
+        ha.sigma       in (0.5, 20.0)
+        nii_b.amplitude -> ha.amplitude / 3.0
+        nii_r.amplitude -> (3.06 / 3.0) * ha.amplitude
+        nii_r.mean      -> (λ_NII_r / λ_Ha) * ha.mean
+        nii_b.mean      -> (λ_NII_b / λ_Ha) * ha.mean
+        nii_r.sigma     -> ha.sigma
+        nii_b.sigma     -> ha.sigma
     end
     free, con
 end
@@ -88,8 +90,9 @@ end
 #      → 2N+1 free. The @model/@constrain blocks are assembled as Exprs and
 #      eval'd once per N, so the macros resolve names→optics for us.
 #
-# AstroFit's constrained parameter order for this generated tree is:
-#   [g1.mean, g1.sigma, g2.mean, g2.sigma, ..., gN.mean, gN.sigma, g1.amplitude]
+# AstroFit's constrained parameter order for this generated tree follows the
+# leaf/field walk used by params/withparams:
+#   [g1.amplitude, g1.mean, g1.sigma, g2.mean, g2.sigma, ..., gN.mean, gN.sigma]
 # ===========================================================================
 
 function nbump_models(N)
@@ -99,25 +102,26 @@ function nbump_models(N)
     sumexpr    = foldl((a, b) -> :($a + $b), (Symbol("g", i) for i in 1:N))
     modelblock = Expr(:block, decls..., sumexpr)
 
-    ties      = [:( @tie $(Symbol("g", i)).amplitude = g1.amplitude * 0.5 )
+    ties      = [:( $(Symbol("g", i)).amplitude -> g1.amplitude * 0.5 )
                  for i in 2:N]
-    consblock = Expr(:block, :( @bound g1.amplitude in (0.0, Inf) ), ties...)
+    consblock = Expr(:block, :( g1.amplitude in (0.0, Inf) ), ties...)
 
     Core.eval(@__MODULE__, quote
         let
             _free = @model $modelblock
-            _con  = @constrain _free $consblock
+            _con = _free
+            @constrain _con $consblock
             (_free, _con)
         end
     end)
 end
 
 function hand_nbump_con(p, x, N)
-    A = p[2N + 1]
+    A = p[1]
     y = zero.(x)
     for i in 1:N
-        μ = p[2i - 1]
-        σ = p[2i]
+        μ = p[2i]
+        σ = p[2i + 1]
         Ai = i == 1 ? A : 0.5 * A
         y .+= @. Ai * exp(-((x - μ) / σ)^2 / 2)
     end

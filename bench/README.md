@@ -26,12 +26,15 @@ julia --project=/home/matteo/.julia/environments/v1.12 bench/benchmarks.jl
 
 The script uses the Julia environment in `/home/matteo/.julia/environments/v1.12`,
 which provides AstroFit, BenchmarkTools and Plots. It prints tables with times,
-allocations and AstroFit/handwritten ratios, then writes two figures.
+allocations and AstroFit/handwritten ratios, then writes two figures under
+`bench/results/<timestamp>` by default. Pass an output directory as the first
+argument, or set `ASTROFIT_BENCH_OUTDIR`, to choose a stable path without
+overwriting older results.
 
 ## What it measures
 
 Each benchmark uses AstroFit's public authoring API (`@model`, `@constrain`,
-`withparams`, `render`, `paramvector`). Before timing, the script asserts that
+`withparams`, `render`, `params`). Before timing, the script asserts that
 the handwritten constrained kernel matches the AstroFit constrained model.
 
 - **Fixed cases:**

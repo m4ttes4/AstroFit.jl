@@ -1,204 +1,146 @@
-# ---------------------------------------------------------------------------
-# Display — compact tree of named components with parameter values and
-# constraints. Constraint colors: free=green, fixed=red, bounded=yellow,
-# tied=ANSI orange (only when the IO supports color).
-# ---------------------------------------------------------------------------
+# Pretty display. Compact `show` rebuilds the algebraic expression; the MIME
+# text/plain CompiledModel show draws a colored, flattened tree.
+# ponytail: colors via stdlib printstyled (honors IOContext :color); no Crayons dep.
 
-_typename(m) = string(nameof(typeof(m)))
+const _NODE  = Union{Sum,Difference,Product,Quotient,Pipe}
+const _ASSOC = Union{Sum,Product}            # only these flatten into sibling chains
+const _TIED_COLOR = 208                      # ANSI 256-color orange
 
-_fmt(v) = sprint(print, v; context = :compact => true)
+_opsym(::Sum)        = "+"
+_opsym(::Difference) = "-"
+_opsym(::Product)    = "*"
+_opsym(::Quotient)   = "/"
+_opsym(::Pipe)       = "|>"
 
-function _find_constraint(spec::Tuple, optic)
-    for (t, c) in spec
-        _same_optic(t, optic) && return c
-    end
-    nothing
+_leafname(::Leaf{n}) where {n} = n
+_fmt(v::AbstractFloat) = string(round(v; sigdigits = 4))
+_fmt(v) = string(v)
+
+# --- compact one-line expression: leaves print as their name, bare components as-is.
+# Parenthesise a child only when its operator differs from the parent (keeps same-op
+# chains like `a + b + c` flat, but guards `a + b*c` vs `(a+b)*c`).
+function _expr(node, parentop = nothing)
+    node isa Leaf && return string(_leafname(node))
+    node isa _NODE || return sprint(show, node)
+    op = _opsym(node)
+    inner = "$(_expr(node.left, op)) $op $(_expr(node.right, op))"
+    (parentop !== nothing && parentop != op) ? "($inner)" : inner
 end
 
-# Map every leaf-parameter optic (as its flattened lens sequence) to its
-# dotted path, so Tied masters can be displayed by name.
-function _collect_paths!(d, names, prefix_optic, prefix, model)
-    for (k, entry) in pairs(names)
-        if entry isa Registry
-            _collect_paths!(d, entry.names, _compose(prefix_optic, entry.optic),
-                            string(prefix, k, "."), model)
-        else
-            full = _compose(prefix_optic, entry)
-            sub  = full(model)
-            if sub isa AbstractModel
-                for f in fieldnames(typeof(sub))
-                    lens = _compose(full, PropertyLens{f}())
-                    d[_optic_leaves(lens)] = string(prefix, k, ".", f)
-                end
-            else
-                d[_optic_leaves(full)] = string(prefix, k)
-            end
-        end
-    end
-    d
+Base.show(io::IO, m::_NODE)              = print(io, _expr(m))
+Base.show(io::IO, l::Leaf)               = print(io, _leafname(l))
+Base.show(io::IO, cm::CompiledModel)     = print(io, _expr(getfield(cm, :tree)))
+
+# --- constraint summaries
+_counts(cm::CompiledModel) = _counts(getfield(cm, :tree))
+_counts(n) = _add(_counts(n.left), _counts(n.right))
+function _counts(l::Leaf)
+    cs = l.constraints
+    (free = count(c -> c isa Free, cs),
+     bounds = count(c -> c isa Bounded, cs),
+     fixed = count(c -> c isa Fixed, cs),
+     tied = count(c -> c isa Tied, cs))
 end
+_add(a, b) = (free = a.free + b.free,
+              bounds = a.bounds + b.bounds,
+              fixed = a.fixed + b.fixed,
+              tied = a.tied + b.tied)
 
-_master_path(d, optic) = get(() -> sprint(print, optic), d, _optic_leaves(optic))
-
-function _print_orange(io, xs...)
-    if get(io, :color, false)
-        print(io, "\e[38;5;208m")
-        print(io, xs...)
-        print(io, "\e[39m")
+# --- flattened children of a tree node
+_kids(node) = node isa _ASSOC ?
+    _flatten!(AbstractModel[], node, _opsym(node)) :
+    AbstractModel[node.left, node.right]
+function _flatten!(acc, node, op)
+    if node isa _ASSOC && _opsym(node) == op
+        _flatten!(acc, node.left, op)
+        _flatten!(acc, node.right, op)
     else
-        print(io, xs...)
+        push!(acc, node)
     end
+    acc
 end
 
-function _constraint_counts(spec::Tuple)
-    free = fixed = bounded = tied = 0
-    for (_, c) in spec
-        if c isa Free
-            free += 1
-        elseif c isa Fixed
-            fixed += 1
-        elseif c isa Bounded
-            bounded += 1
-        elseif c isa Tied
-            tied += 1
-        end
-    end
-    (; free, fixed, bounded, tied)
-end
-
-function _component_count(names)
-    n = 0
-    for (_, entry) in pairs(names)
-        n += 1
-        entry isa Registry && (n += _component_count(entry.names))
-    end
-    n
-end
-
-function _print_count(io, label, n, color)
-    print(io, "  ", rpad(label * ":", 12))
-    color === nothing ? print(io, n) : printstyled(io, n; color)
-    println(io)
-end
-
-_print_name(io, name) = printstyled(io, name; bold = true)
-_print_type(io, type) = printstyled(io, type; color = :cyan)
-
-_print_constraint(io, ::Free, d) = printstyled(io, "free"; color = :green)
-_print_constraint(io, ::Fixed, d) = printstyled(io, "fixed"; color = :red)
-_print_constraint(io, c::Bounded, d) =
-    printstyled(io, "bounded [", _fmt(c.lower), ", ", _fmt(c.upper), "]"; color = :yellow)
-_print_constraint(io, c::Tied, d) =
-    _print_orange(io, "tied to ", join((_master_path(d, o) for o in c.masters), ", "))
-
-function _param_line(io, prefix, label, w, value, c, d)
-    print(io, prefix, rpad(label, w), " = ", _fmt(value))
-    if c !== nothing
-        print(io, "  ")
-        _print_constraint(io, c, d)
+# --- the tree view
+function _header(io, title, counts)
+    printstyled(io, title; bold = true)
+    for (n, label, color) in ((counts.free, "free", :green),
+                              (counts.bounds, "bounds", :blue),
+                              (counts.fixed, "fixed", :red),
+                              (counts.tied, "tied", _TIED_COLOR))
+        printstyled(io, "  ·  "; color = :light_black)
+        _stat(io, n, label, color)
     end
     println(io)
 end
 
-function _show_params(io, m::AbstractModel, prefix_optic, spec, prefix, d)
-    fns = fieldnames(typeof(m))
-    w = maximum((length(string(f)) for f in fns); init = 0)
-    n = length(fns)
-    for (i, f) in enumerate(fns)
-        branch = i == n ? "└─ " : "├─ "
-        c = _find_constraint(spec, _compose(prefix_optic, PropertyLens{f}()))
-        _param_line(io, prefix * branch, string(f), w, getfield(m, f), c, d)
-    end
-end
-
-function _component_header(io, prefix, branch, name, type)
-    print(io, prefix, branch)
-    _print_name(io, string(name))
-    print(io, " :: ")
-    _print_type(io, type)
-    println(io)
-end
-
-function _show_names(io, model, spec, names, prefix_optic, prefix, d)
-    w = maximum((length(string(k)) for (k, entry) in pairs(names)
-                 if !(entry isa Registry) &&
-                    !(_compose(prefix_optic, entry)(model) isa AbstractModel));
-                init = 0)
-    entries = collect(pairs(names))
-    n = length(entries)
-    for (i, (k, entry)) in enumerate(entries)
-        last = i == n
-        branch = last ? "└─ " : "├─ "
-        child_prefix = prefix * (last ? "   " : "│  ")
-        if entry isa Registry
-            full = _compose(prefix_optic, entry.optic)
-            _component_header(io, prefix, branch, k, _typename(full(model)))
-            _show_names(io, model, spec, entry.names, full, child_prefix, d)
-        else
-            full = _compose(prefix_optic, entry)
-            sub  = full(model)
-            if sub isa AbstractModel
-                _component_header(io, prefix, branch, k, _typename(sub))
-                _show_params(io, sub, full, spec, child_prefix, d)
-            else
-                _param_line(io, prefix * branch, string(k), w, sub, _find_constraint(spec, full), d)
-            end
-        end
-    end
-end
-
-function _show_summary(io, cm::CompiledModel)
-    counts = _constraint_counts(getfield(cm, :spec))
-    printstyled(io, "AstroFit.CompiledModel"; bold = true)
-    println(io)
-    _print_count(io, "components", _component_count(getfield(cm, :names)), nothing)
-    _print_count(io, "free", counts.free, :green)
-    _print_count(io, "fixed", counts.fixed, :red)
-    _print_count(io, "bounded", counts.bounded, :yellow)
-    print(io, "  ", rpad("tied:", 12))
-    _print_orange(io, counts.tied)
-    println(io)
+function Base.show(io::IO, ::MIME"text/plain", l::Leaf)
+    _header(io, "Leaf", _counts(l))
+    _tree(io, l, "", true, true)
 end
 
 function Base.show(io::IO, ::MIME"text/plain", cm::CompiledModel)
-    model = getfield(cm, :model)
-    spec  = getfield(cm, :spec)
-    names = getfield(cm, :names)
-    buf   = IOContext(IOBuffer(), io)
-    _show_summary(buf, cm)
-    println(buf)
-    d = _collect_paths!(Dict{Any, String}(), names, identity, "", model)
-    if isempty(keys(names))
-        model isa AbstractModel ?
-            _show_params(buf, model, identity, spec, "  ", d) :
-            println(buf, "  ", model)
+    tree = getfield(cm, :tree)
+    _header(io, "CompiledModel", _counts(cm))
+    print(io, "formula: ")
+    println(io, _expr(tree))
+    _tree(io, tree, "", true, true)
+end
+
+function _stat(io, n, label, color)
+    print(io, n, " ")
+    printstyled(io, label; color, bold = true)
+end
+
+function _tree(io, node, prefix, islast, isroot = false)
+    isroot || print(io, prefix, islast ? "└─ " : "├─ ")
+    child = isroot ? prefix : prefix * (islast ? "   " : "│  ")
+    if node isa Leaf
+        _leafline(io, node); println(io)
+        fields = fieldnames(typeof(node.model))
+        isempty(fields) && return
+        width = maximum(length(string(f)) for f in fields)
+        for (i, f) in enumerate(fields)
+            _fieldline(io, child, i == length(fields), f,
+                       getfield(node.model, f), node.constraints[i], width)
+        end
     else
-        _show_names(buf, model, spec, names, identity, "  ", d)
+        printstyled(io, _opsym(node), "\n"; color = :light_black, bold = true)
+        kids = _kids(node)
+        for (i, k) in enumerate(kids)
+            _tree(io, k, child, i == length(kids))
+        end
     end
-    print(io, chomp(String(take!(buf.io))))
 end
 
-Base.show(io::IO, cm::CompiledModel) =
-    print(io, "CompiledModel(", length(keys(getfield(cm, :names))),
-          " components, ", nfree(cm), " free)")
-
-function Base.show(io::IO, ::MIME"text/plain", ref::ComponentRef)
-    root  = getfield(ref, :root)
-    optic = getfield(ref, :optic)
-    names = getfield(ref, :names)
-    model = getfield(root, :model)
-    spec  = getfield(root, :spec)
-    buf   = IOContext(IOBuffer(), io)
-    printstyled(buf, "AstroFit.ComponentRef"; bold = true)
-    print(buf, " :: ")
-    _print_type(buf, _typename(optic(model)))
-    println(buf)
-    d = _collect_paths!(Dict{Any, String}(), getfield(root, :names), identity, "", model)
-    isempty(keys(names)) ?
-        _show_params(buf, optic(model), optic, spec, "  ", d) :
-        _show_names(buf, model, spec, names, optic, "  ", d)
-    print(io, chomp(String(take!(buf.io))))
+function _leafline(io, l)
+    printstyled(io, _leafname(l); color = :cyan, bold = true)
+    printstyled(io, " :: "; color = :light_black)
+    printstyled(io, nameof(typeof(l.model)); color = :blue)
 end
 
-Base.show(io::IO, ref::ComponentRef) =
-    print(io, "ComponentRef(", _typename(getfield(ref, :optic)(getfield(getfield(ref, :root), :model))), ")")
+function _fieldline(io, prefix, islast, f, v, c, width)
+    print(io, prefix, islast ? "└─ " : "├─ ")
+    print(io, rpad(string(f), width))
+    print(io, "  ", rpad(_fieldvalue(v, c), 8), "  ")
+    _constraint(io, c)
+    println(io)
+end
+
+_fieldvalue(v, c::Fixed) = _fmt(c.value)
+_fieldvalue(v, _) = _fmt(v)
+
+function _constraint(io, ::Free)
+    printstyled(io, "free"; color = :green, bold = true)
+end
+function _constraint(io, c::Bounded)
+    printstyled(io, "bounds"; color = :blue, bold = true)
+    print(io, " [", _fmt(c.lower), ", ", _fmt(c.upper), "]")
+end
+function _constraint(io, ::Fixed)
+    printstyled(io, "fixed"; color = :red, bold = true)
+end
+function _constraint(io, c::Tied)
+    printstyled(io, "tied"; color = _TIED_COLOR, bold = true)
+    print(io, " -> ", _masters(c))
+end
+_masters(::Tied{P}) where {P} = join(("$l.$f" for (l, f) in P), ", ")

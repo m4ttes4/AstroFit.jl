@@ -1,132 +1,119 @@
-@testitem "zoo: single-component spectral prefabs have physical constraints" tags=[:zoo] begin
+@testitem "zoo-style spectral line factory uses current constraints" tags=[:zoo] begin
     using AstroFit
-    using Accessors: @set
 
-    emission = EmissionLine1D(center=6563.0, amplitude=2.0,
-                              sigma=1.5, center_window=2.0)
+    function emission_line(; center, amplitude=2.0, sigma=1.5, center_window=2.0)
+        cm = @model begin
+            line = Gaussian1D(amplitude=amplitude, mean=center, sigma=sigma)
+            line
+        end
+        @constrain cm begin
+            line.amplitude in (0.0, Inf)
+            line.sigma in (0.0, Inf)
+            line.mean in (center - center_window, center + center_window)
+        end
+        cm
+    end
+
+    emission = emission_line(center=6563.0)
     @test emission isa CompiledModel
     @test nfree(emission) == 3
-    lo, hi = bounds_vectors(emission.spec)
+
+    lo, hi = bounds(emission)
     @test 0.0 in lo
     @test 6561.0 in lo
     @test 6565.0 in hi
-    @test_throws ArgumentError @set emission.amplitude = -1.0
-    @test_throws ArgumentError @set emission.sigma = -0.1
-
-    fixed_center = EmissionLine1D(center=5007.0, center_window=0.0)
-    @test nfree(fixed_center) == 2
-    @test fixed_center.mean == 5007.0
-
-    absorption = AbsorptionLine1D(center=5890.0, depth=0.3, sigma=2.0)
-    @test absorption.amplitude == -0.3
-    @test_throws ArgumentError @set absorption.amplitude = 0.1
-    @test (@set absorption.amplitude = -0.5).amplitude == -0.5
-
-    continuum = LinearContinuum1D(slope=1e-4, intercept=1.0)
-    @test nfree(continuum) == 2
-    @test_throws ArgumentError @set continuum.intercept = -1.0
-
-    background = ConstantBackground1D(value=0.2)
-    @test nfree(background) == 1
-    @test_throws ArgumentError @set background.value = -0.1
+    @test render(emission, 6563.0) ≈ 2.0
 end
 
-@testitem "zoo: emission doublet ties physical ratios" tags=[:zoo, :tied] begin
+@testitem "zoo-style doublet ties physical ratios" tags=[:zoo, :tied] begin
     using AstroFit
-    using Accessors: @set
 
-    doublet = EmissionDoublet1D(blue_center=4959.0, red_center=5007.0,
-                                amplitude=1.0, sigma=2.0,
-                                ratio=2.98, center_window=5.0)
+    blue_center = 4959.0
+    red_center = 5007.0
+    ratio = 2.98
+
+    doublet = @model begin
+        blue = Gaussian1D(amplitude=1.0, mean=blue_center, sigma=2.0)
+        red = Gaussian1D(amplitude=ratio, mean=red_center, sigma=2.0)
+        blue + red
+    end
+
+    @constrain doublet begin
+        blue.amplitude in (0.0, Inf)
+        blue.sigma in (0.0, Inf)
+        red.amplitude -> ratio * blue.amplitude
+        red.mean -> (red_center / blue_center) * blue.mean
+        red.sigma -> blue.sigma
+    end
 
     @test nfree(doublet) == 3
-    @test doublet.red.amplitude ≈ 2.98 * doublet.blue.amplitude
-    @test doublet.red.mean ≈ (5007.0 / 4959.0) * doublet.blue.mean
-    @test doublet.red.sigma == doublet.blue.sigma
-    @test_throws ArgumentError @set doublet.red.sigma = 3.0
-
     rebuilt = withparams(doublet, [2.0, 4960.0, 3.0])
-    @test rebuilt.red.amplitude ≈ 5.96
-    @test rebuilt.red.mean ≈ (5007.0 / 4959.0) * 4960.0
-    @test rebuilt.red.sigma == 3.0
-
-    fixed_center = EmissionDoublet1D(blue_center=3726.0, red_center=3729.0,
-                                     ratio=1.5, center_window=0.0)
-    @test nfree(fixed_center) == 2
-    @test fixed_center.blue.mean == 3726.0
-    @test fixed_center.red.mean ≈ 3729.0
+    @test rebuilt.right.amplitude ≈ ratio * 2.0
+    @test rebuilt.right.mean ≈ (red_center / blue_center) * 4960.0
+    @test rebuilt.right.sigma == 3.0
+    @test :red_amplitude ∉ paramnames(doublet)
+    @test :red_sigma ∉ paramnames(doublet)
 end
 
-@testitem "zoo: spectrum prefabs compose and namespace constraints" tags=[:zoo, :prefab] begin
+@testitem "zoo-style spectrum composition namespaces flat leaves" tags=[:zoo] begin
     using AstroFit
-    using Accessors: @set
 
-    emission_spectrum = EmissionLineSpectrum1D(center=6563.0, amplitude=2.0,
-                                               sigma=1.5, intercept=1.0,
-                                               center_window=1.0)
-    @test nfree(emission_spectrum) == 5
-    @test emission_spectrum.continuum.intercept == 1.0
-    @test emission_spectrum.line.amplitude == 2.0
-    @test_throws ArgumentError @set emission_spectrum.continuum.intercept = -1.0
-    @test_throws ArgumentError @set emission_spectrum.line.sigma = -1.0
+    spectrum = @model begin
+        continuum = Linear1D(slope=1e-4, intercept=1.0)
+        line = Gaussian1D(amplitude=2.0, mean=6563.0, sigma=1.5)
+        continuum + line
+    end
 
-    absorption_spectrum = AbsorptionLineSpectrum1D(center=5890.0, depth=0.2,
-                                                   sigma=1.0, intercept=1.0)
-    @test nfree(absorption_spectrum) == 5
-    @test absorption_spectrum.line.amplitude == -0.2
-    continuum_at_center = absorption_spectrum.continuum.slope * 5890.0 +
-                          absorption_spectrum.continuum.intercept
-    @test render(absorption_spectrum, 5890.0) < continuum_at_center
+    @constrain spectrum begin
+        continuum.intercept in (0.0, Inf)
+        line.amplitude in (0.0, Inf)
+        line.sigma in (0.0, Inf)
+    end
+
+    @test nfree(spectrum) == 5
+    @test spectrum.continuum.model.intercept == 1.0
+    @test spectrum.line.model.amplitude == 2.0
+    continuum_at_center = render(spectrum.continuum.model, 6563.0)
+    @test render(spectrum, 6563.0) > continuum_at_center
 end
 
-@testitem "zoo: 2D galaxy line profiles evaluate and constrain physical params" tags=[:zoo, :twod] begin
+@testitem "zoo-style 2D line profiles render and constrain physical params" tags=[:zoo, :twod] begin
     using AstroFit
-    using Accessors: @set
 
-    g = GalaxyGaussianLineProfile2D(amplitude=3.0, x0=1.0, y0=-2.0,
-                                    sigma_x=2.0, sigma_y=1.0,
-                                    theta=π / 4)
-    @test g isa CompiledModel
-    @test ndims(getfield(g, :model)) == 2
-    @test nfree(g) == 6
-    @test render(g, 1.0, -2.0) ≈ 3.0
-    @test render(g, 3.0, -2.0) < render(g, 1.0, -2.0)
-    @test_throws ArgumentError @set g.amplitude = -1.0
-    @test_throws ArgumentError @set g.sigma_x = -0.1
-    @test_throws ArgumentError GalaxyGaussianLineProfile2D(sigma_y=0.0)
+    struct Gaussian2D{T<:Real} <: AbstractModel
+        amplitude::T
+        x0::T
+        y0::T
+        sigma_x::T
+        sigma_y::T
+    end
 
-    d = GalaxyExponentialLineProfile2D(amplitude=5.0, x0=0.0, y0=0.0,
-                                       scale_radius=2.0, axis_ratio=0.5)
-    @test d isa CompiledModel
-    @test ndims(getfield(d, :model)) == 2
-    @test nfree(d) == 6
-    @test render(d, 0.0, 0.0) ≈ 5.0
-    @test render(d, 2.0, 0.0) ≈ 5.0 * exp(-1)
-    @test render(d, 0.0, 1.0) ≈ 5.0 * exp(-1)
-    @test_throws ArgumentError @set d.axis_ratio = 0.0
-    @test_throws ArgumentError @set d.axis_ratio = 1.5
-    @test_throws ArgumentError GalaxyExponentialLineProfile2D(axis_ratio=0.0)
-end
-
-@testitem "zoo: 2D line profiles compose inside @model" tags=[:zoo, :twod, :prefab] begin
-    using AstroFit
+    AstroFit.render(m::Gaussian2D, x::Number, y::Number) =
+        m.amplitude * exp(-0.5 * (((x - m.x0) / m.sigma_x)^2 +
+                                  ((y - m.y0) / m.sigma_y)^2))
 
     scene = @model begin
-        bulge = GalaxyGaussianLineProfile2D(amplitude=2.0, sigma_x=1.0,
-                                            sigma_y=1.0)
-        disk = GalaxyExponentialLineProfile2D(amplitude=1.0,
-                                              scale_radius=3.0,
-                                              axis_ratio=0.8)
+        bulge = Gaussian2D(3.0, 1.0, -2.0, 2.0, 1.0)
+        disk = Gaussian2D(1.0, 1.0, -2.0, 5.0, 3.0)
         bulge + disk
     end
 
-    @test scene.bulge.amplitude == 2.0
-    @test scene.disk.axis_ratio == 0.8
-    @test render(scene, 0.0, 0.0) ≈ 3.0
-    @test nfree(scene) == 12
+    @constrain scene begin
+        bulge.amplitude in (0.0, Inf)
+        bulge.sigma_x in (0.0, Inf)
+        bulge.sigma_y in (0.0, Inf)
+        disk.amplitude in (0.0, Inf)
+        disk.sigma_x in (0.0, Inf)
+        disk.sigma_y in (0.0, Inf)
+    end
 
-    lo, hi = bounds_vectors(scene.spec)
-    @test count(==(0.0), lo) == 5      # amplitudes, Gaussian widths, disk scale
-    @test eps(Float64) in lo
-    @test 1.0 in hi                    # disk axis-ratio upper bound
+    @test nfree(scene) == 10
+    @test render(scene, 1.0, -2.0) ≈ 4.0
+    @test render(scene, 4.0, -2.0) < render(scene, 1.0, -2.0)
+
+    x = [1.0 2.0; 3.0 4.0]
+    y = fill(-2.0, size(x))
+    out = similar(x)
+    @test render!(out, scene, x, y) === out
+    @test out ≈ render(scene, x, y)
 end
