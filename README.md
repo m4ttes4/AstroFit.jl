@@ -9,12 +9,7 @@ but they quickly become hard to reuse. AstroFit gives you composable models and
 keeps the fitting hot path close to handwritten speed by compiling parameter
 scatter and tie resolution into generated, straight-line code.
 
-This small library comes from liking the model-composition style of
-[Astropy modeling](https://docs.astropy.org/en/stable/modeling/) and
-[lmfit](https://lmfit.github.io/lmfit-py/), while wanting to push the same idea
-through Julia's type system and compiler. The `AccessibleModels` repository was
-also an important design inspiration: its emphasis on composable, inspectable
-model objects helped shape the API direction here.
+I started this because I missed the way [Astropy modeling](https://docs.astropy.org/en/stable/modeling/) and [lmfit](https://lmfit.github.io/lmfit-py/) let you snap models together, but I wanted that in Julia where the compiler can actually inline everything. [`AccessibleModels`](https://github.com/) was another reference point for the composable-model idea.
 
 > [!WARNING]
 > AstroFit is a working proof of concept, not a
@@ -576,11 +571,6 @@ Rules for custom models:
 ---
 
 ## Internal Design
-
-The internal architecture is documented in more detail in:
-
-- [`CONTEXT.md`](CONTEXT.md) — domain language and key concepts.
-- [`docs/adr/0001`](docs/adr/0001-compiled-constraints-with-structured-spec.md) — design decisions for the compiled-constraints refactor.
 
 ### Structure
 
