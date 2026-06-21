@@ -33,6 +33,7 @@ scatter and tie resolution into generated, straight-line code.
 - [Fitting](#fitting)
 - [Optimization.jl Integration](#optimizationjl-integration)
 - [Benchmarks](#benchmarks)
+- [Real Examples](#real-examples)
 - [Extending AstroFit](#extending-astrofit)
 - [Internal Design](#internal-design)
 
@@ -374,6 +375,134 @@ allocation-free.
 
 See [`bench/README.md`](bench/README.md) for the benchmark script, command, and
 current numbers.
+
+---
+
+## Real Examples
+
+Full working scripts are in the [`examples/`](examples/) directory.
+
+### Double Gaussian + linear continuum (1D)
+
+Two emission lines on a sloped continuum, fitted to synthetic noisy data. The
+second Gaussian's width and amplitude are tied to the first (`g2.sigma = g1.sigma`,
+`g2.amplitude = 0.5 * g1.amplitude`), reducing 9 model parameters to 6 free ones.
+
+```julia
+cm = @model begin
+    cont = Linear1D(slope = 0.0, intercept = 0.5)
+    g1   = Gaussian1D(amplitude = 5.0, mean = 4.5, sigma = 0.8)
+    g2   = Gaussian1D(amplitude = 3.0, mean = 8.0, sigma = 0.8)
+    cont + g1 + g2
+end
+
+@constrain cm begin
+    g2.sigma     -> g1.sigma
+    g2.amplitude -> 0.5 * g1.amplitude
+end
+```
+
+![Double Gaussian fit](examples/double_gaussian_fit.png)
+
+See [`examples/double_gaussian_fit.jl`](examples/double_gaussian_fit.jl) for the
+full script.
+
+### Blended galaxies bulge+disk decomposition (2D)
+
+Two partially overlapping galaxies, each decomposed into a Gaussian bulge and an
+exponential disk (Sersic n=1). All four components are elliptical (`q`, `theta`
+free). Within each galaxy, the bulge center and position angle are tied to the
+disk. Sersic indices are fixed. 18 free parameters total, fitted with
+`Fminbox(LBFGS())` via Optimization.jl.
+
+```julia
+cm = @model begin
+    bulge1 = Gaussian2D(amplitude = 20.0, x0 = -3.5, y0 = 0.5, sigma = 2.5, q = 1.0, theta = 0.0)
+    disk1  = Sersic2D(amplitude = 8.0, x0 = -3.5, y0 = 0.5, r_eff = 5.0, n = 1.0, q = 0.9, theta = 0.0)
+    bulge2 = Gaussian2D(amplitude = 15.0, x0 = 4.5, y0 = 0.0, sigma = 1.5, q = 1.0, theta = 0.0)
+    disk2  = Sersic2D(amplitude = 5.0, x0 = 4.5, y0 = 0.0, r_eff = 4.5, n = 1.0, q = 0.9, theta = 0.0)
+    bulge1 + disk1 + bulge2 + disk2
+end
+
+@constrain cm begin
+    disk1.n
+    disk2.n
+    bulge1.x0    -> disk1.x0
+    bulge1.y0    -> disk1.y0
+    bulge1.theta -> disk1.theta
+    bulge2.x0    -> disk2.x0
+    bulge2.y0    -> disk2.y0
+    bulge2.theta -> disk2.theta
+    # ... bounds on amplitudes, sizes, q, theta
+end
+```
+
+![Blended galaxies fit](examples/blended_galaxies_fit.png)
+
+See [`examples/blended_galaxies_fit.jl`](examples/blended_galaxies_fit.jl) for
+the full script.
+
+### Redshifted galaxy spectrum flagship fit (1D)
+
+A larger synthetic AGN host-galaxy spectrum with a visibly curved power-law
+continuum, narrow Balmer lines, broad AGN Balmer components, [OIII], [NII],
+[SII], and Na D absorption. The model uses a custom redshift coordinate
+transform, redshift-dependent flux scaling, fixed atomic doublet ratios, shared
+narrow-line widths, tied broad-line widths, fixed rest wavelengths, bounded
+emission/absorption amplitudes, and a Gaussian likelihood through
+Optimization.jl. The result compresses 43 raw model fields to 15 free fitted
+parameters.
+
+```julia
+cm = @model begin
+    cont = Linear1D(slope = cont_slope, intercept = cont_intercept)
+    stellar = PowerLaw1D(norm = pl_norm, x_ref = L_REF, index = pl_index)
+
+    hbeta = Gaussian1D(amplitude = ha_amplitude / 2.86, mean = L_HB, sigma = narrow_sigma)
+    broad_hbeta = Gaussian1D(amplitude = broad_ha_amplitude / 3.1, mean = L_HB, sigma = broad_sigma)
+    oiii_b = Gaussian1D(amplitude = oiii_blue_amplitude, mean = L_OIII_B, sigma = narrow_sigma)
+    oiii_r = Gaussian1D(amplitude = 2.98 * oiii_blue_amplitude, mean = L_OIII_R, sigma = narrow_sigma)
+
+    ha = Gaussian1D(amplitude = ha_amplitude, mean = L_HA, sigma = narrow_sigma)
+    broad_ha = Gaussian1D(amplitude = broad_ha_amplitude, mean = L_HA, sigma = broad_sigma)
+    nii_b = Gaussian1D(amplitude = nii_blue_amplitude, mean = L_NII_B, sigma = narrow_sigma)
+    nii_r = Gaussian1D(amplitude = 3.06 * nii_blue_amplitude, mean = L_NII_R, sigma = narrow_sigma)
+    sii_b = Gaussian1D(amplitude = sii_blue_amplitude, mean = L_SII_B, sigma = narrow_sigma)
+    sii_r = Gaussian1D(amplitude = sii_red_amplitude, mean = L_SII_R, sigma = narrow_sigma)
+
+    nad_d2 = Gaussian1D(amplitude = nad_d2_amplitude, mean = L_NAD_D2, sigma = nad_sigma)
+    nad_d1 = Gaussian1D(amplitude = 0.65 * nad_d2_amplitude, mean = L_NAD_D1, sigma = nad_sigma)
+
+    redshift = RedshiftAxis1D(z = z)
+    flux_scale = RedshiftFluxScale1D(z = z)
+
+    ((cont + stellar + hbeta + broad_hbeta + oiii_b + oiii_r + ha +
+      broad_ha + nii_b + nii_r + sii_b + sii_r + nad_d2 + nad_d1) ∘ redshift) * flux_scale
+end
+
+@constrain cm begin
+    stellar.x_ref
+    hbeta.amplitude -> ha.amplitude / 2.86
+    hbeta.mean
+    hbeta.sigma -> ha.sigma
+    broad_hbeta.amplitude -> broad_ha.amplitude / 3.1
+    broad_hbeta.mean
+    broad_hbeta.sigma -> broad_ha.sigma
+    oiii_r.amplitude -> 2.98 * oiii_b.amplitude
+    oiii_r.sigma -> ha.sigma
+    nii_r.amplitude -> 3.06 * nii_b.amplitude
+    nii_r.sigma -> ha.sigma
+    nad_d1.amplitude -> 0.65 * nad_d2.amplitude
+    nad_d1.sigma -> nad_d2.sigma
+    flux_scale.z -> redshift.z
+    # ... bounds on continuum, narrow/broad line amplitudes, widths, and redshift
+end
+```
+
+![Complex galaxy spectrum fit](examples/complex_galaxy_spectrum_fit.png)
+
+See [`examples/complex_galaxy_spectrum_fit.jl`](examples/complex_galaxy_spectrum_fit.jl)
+for the full script.
 
 ---
 
