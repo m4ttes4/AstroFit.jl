@@ -16,14 +16,13 @@ through Julia's type system and compiler. The `AccessibleModels` repository was
 also an important design inspiration: its emphasis on composable, inspectable
 model objects helped shape the API direction here.
 
-<div style="border: 1px solid #d29922; border-left: 4px solid #d29922; border-radius: 6px; padding: 0.75rem 1rem; margin: 1rem 0;">
-<strong>Warning.</strong> AstroFit is a working proof of concept, not a
-production-ready package. It works for the workflows I built it for, but the API,
-documentation, and test coverage should still be treated as experimental. I
-wrote and maintain the repository myself, and AI assistance played an important
-role while designing the generated-function internals that make
-<code>withparams</code> fast.
-</div>
+> [!WARNING]
+> AstroFit is a working proof of concept, not a
+> production-ready package. It works for the workflows I built it for, but the API,
+> documentation, and test coverage should still be treated as experimental. I
+> wrote and maintain the repository myself, and AI assistance played an important
+> role while designing the generated-function internals that make
+> `withparams` fast.
 
 - Define reusable model components with clear names.
 - Attach physical constraints with `@constrain`.
