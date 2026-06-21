@@ -560,7 +560,68 @@ for the full script.
 
 ## Extending AstroFit
 
-Any Julia struct that subtypes `AbstractModel` can be an AstroFit model.
+The built-in models cover the most common shapes — gaussians, lorentzians,
+power laws, polynomials — but sooner or later you'll need something specific:
+a dust extinction curve, a blackbody, a custom line profile, a coordinate
+transform. AstroFit is designed for this: any Julia struct can become a model
+component, and it takes two things.
+
+### Step 1: define a struct
+
+Your struct needs to subtype `AbstractModel` and hold its parameters as fields.
+Use `@kwdef` so you get keyword constructors for free:
+
+```julia
+Base.@kwdef struct Blackbody1D{T<:Real} <: AbstractModel
+    temperature::T = 5000.0
+    norm::T        = 1.0
+end
+```
+
+One thing to watch: the type parameter `T` should be `<:Real`, not `Float64`.
+ForwardDiff works by passing dual numbers through your model — if you hardcode
+`Float64`, gradient-based fitting will break.
+
+### Step 2: define `render`
+
+`render` takes your model and a single scalar coordinate, and returns the model
+value at that point:
+
+```julia
+function AstroFit.render(m::Blackbody1D, λ::Number)
+    h, c, k = 6.626e-27, 2.998e10, 1.381e-16   # CGS
+    ν = c / (λ * 1e-8)                           # Å → cm → Hz
+    m.norm * 2h * ν^3 / c^2 / (exp(h * ν / (k * m.temperature)) - 1)
+end
+```
+
+The coordinate argument (`λ`, `x`, `ν` — whatever makes sense) must accept
+`Number`, not just `Float64`, again for the same AD reason. That's it — your
+model is ready.
+
+### Using it
+
+Once defined, your model works exactly like a built-in one. You can compose it,
+name it, constrain it, and fit it:
+
+```julia
+spec = @model begin
+    bb   = Blackbody1D(temperature = 6000.0, norm = 1e-10)
+    line = Gaussian1D(amplitude = 5.0, mean = 6563.0, sigma = 2.0)
+    bb + line
+end
+
+@constrain spec begin
+    bb.temperature in (3000, 30000)
+    line.mean
+end
+```
+
+### Coordinate transforms
+
+Not every model produces flux. Some transform coordinates — a redshift, a
+velocity offset, a wavelength-to-energy conversion. These work through
+composition with `∘`:
 
 ```julia
 Base.@kwdef struct Redshift1D{T<:Real} <: AbstractModel
@@ -570,22 +631,38 @@ end
 AstroFit.render(m::Redshift1D, λ::Number) = λ / (1 + m.z)
 ```
 
-Then use it like any built-in component:
+When you write `line ∘ zshift`, AstroFit evaluates the right side first
+(transforming the coordinate), then passes the result to the left side. So
+`Gaussian1D(...) ∘ Redshift1D(z=0.1)` evaluates the gaussian at the
+rest-frame wavelength:
 
 ```julia
 spec = @model begin
     line   = Gaussian1D(1.0, 5000.0, 10.0)
-    zshift = Redshift1D(z=0.1)
+    zshift = Redshift1D(z = 0.1)
     line ∘ zshift
 end
 ```
 
-Rules for custom models:
+### Optional: `render!` for speed
 
-- subtype `AbstractModel`;
-- define scalar `render(m::YourModel, x::Number)`;
-- accept `Number`, not only `Float64`, so ForwardDiff dual values work;
-- let AstroFit handle composition, naming, constraints, and `withparams`.
+The scalar `render` is all you need — AstroFit will broadcast it over arrays
+automatically. But if your model has work that can be shared across points
+(precomputing constants, avoiding repeated allocations), you can define an
+in-place `render!` that fills a preallocated output array:
+
+```julia
+function AstroFit.render!(out::AbstractArray, m::Blackbody1D, λs::AbstractArray)
+    h, c, k = 6.626e-27, 2.998e10, 1.381e-16
+    @inbounds for i in eachindex(out, λs)
+        ν = c / (λs[i] * 1e-8)
+        out[i] = m.norm * 2h * ν^3 / c^2 / (exp(h * ν / (k * m.temperature)) - 1)
+    end
+    out
+end
+```
+
+This is purely optional — define it when profiling shows it matters.
 
 ---
 
