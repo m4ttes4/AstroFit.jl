@@ -14,9 +14,9 @@ using Random
 # ---------------------------------------------------------------------------
 true_scene = @model begin
     bulge1 = Gaussian2D(amplitude = 60.0, x0 = -2.0, y0 = -1.0, sigma = 1.0, q = 0.7, theta = 0.8)
-    disk1  = Sersic2D(amplitude = 20.0, x0 = -2.0, y0 = -1.0, r_eff = 3.5, n = 1.0, q = 0.5, theta = 0.8)
+    disk1 = Sersic2D(amplitude = 20.0, x0 = -2.0, y0 = -1.0, r_eff = 3.5, n = 1.0, q = 0.5, theta = 0.8)
     bulge2 = Gaussian2D(amplitude = 35.0, x0 = 3.0, y0 = 1.5, sigma = 0.7, q = 0.8, theta = -0.5)
-    disk2  = Sersic2D(amplitude = 12.0, x0 = 3.0, y0 = 1.5, r_eff = 2.8, n = 1.0, q = 0.6, theta = -0.5)
+    disk2 = Sersic2D(amplitude = 12.0, x0 = 3.0, y0 = 1.5, r_eff = 2.8, n = 1.0, q = 0.6, theta = -0.5)
     bulge1 + disk1 + bulge2 + disk2
 end
 
@@ -24,23 +24,23 @@ end
 # 2. Synthetic image
 # ---------------------------------------------------------------------------
 Random.seed!(42)
-npix    = 100
-coord   = range(-8.0, 8.0; length = npix)
-X       = [x for x in coord, _ in coord]
-Y       = [y for _ in coord, y in coord]
+npix = 100
+coord = range(-8.0, 8.0; length = npix)
+X = [x for x in coord, _ in coord]
+Y = [y for _ in coord, y in coord]
 σ_noise = 0.4
 img_true = render(true_scene, X, Y)
 img_data = img_true .+ σ_noise .* randn(size(X))
-err      = fill(σ_noise, size(X))
+err = fill(σ_noise, size(X))
 
 # ---------------------------------------------------------------------------
 # 3. Fitting model — deliberately bad initial guess + constraints
 # ---------------------------------------------------------------------------
 cm = @model begin
     bulge1 = Gaussian2D(amplitude = 20.0, x0 = -3.5, y0 = 0.5, sigma = 2.5, q = 1.0, theta = 0.0)
-    disk1  = Sersic2D(amplitude = 8.0, x0 = -3.5, y0 = 0.5, r_eff = 5.0, n = 1.0, q = 0.9, theta = 0.0)
+    disk1 = Sersic2D(amplitude = 8.0, x0 = -3.5, y0 = 0.5, r_eff = 5.0, n = 1.0, q = 0.9, theta = 0.0)
     bulge2 = Gaussian2D(amplitude = 15.0, x0 = 4.5, y0 = 0.0, sigma = 1.5, q = 1.0, theta = 0.0)
-    disk2  = Sersic2D(amplitude = 5.0, x0 = 4.5, y0 = 0.0, r_eff = 4.5, n = 1.0, q = 0.9, theta = 0.0)
+    disk2 = Sersic2D(amplitude = 5.0, x0 = 4.5, y0 = 0.0, r_eff = 4.5, n = 1.0, q = 0.9, theta = 0.0)
     bulge1 + disk1 + bulge2 + disk2
 end
 
@@ -80,7 +80,7 @@ end
 # 4. Fit
 # ---------------------------------------------------------------------------
 prob = OptimizationProblem(cm, (X, Y), img_data, err)
-sol  = solve(prob, Fminbox(LBFGS()))
+sol = solve(prob, Fminbox(LBFGS()))
 
 fit = withparams(cm, sol.u)
 
@@ -93,8 +93,8 @@ println()
 # ---------------------------------------------------------------------------
 # 5. Plot: data | initial guess | best fit | residual
 # ---------------------------------------------------------------------------
-img_init  = render(cm, X, Y)
-img_fit   = render(fit, X, Y)
+img_init = render(cm, X, Y)
+img_fit = render(fit, X, Y)
 img_resid = img_data .- img_fit
 
 logstretch(img) = log10.(clamp.(img, 0.1, Inf))
@@ -104,19 +104,23 @@ crange_log = extrema(logstretch(img_data))
 
 titles = ["Data", "Initial guess", "Best fit", "Residual"]
 images = [logstretch(img_data), logstretch(img_init), logstretch(img_fit), img_resid]
-cmaps  = [:inferno, :inferno, :inferno, :balance]
+cmaps = [:inferno, :inferno, :inferno, :balance]
 
 for (i, (ttl, img, cmap)) in enumerate(zip(titles, images, cmaps))
-    ax = Axis(fig[1, 2i-1]; title = ttl, aspect = DataAspect(), xlabel = "x",
-              ylabel = i == 1 ? "y" : "")
+    ax = Axis(
+        fig[1, 2i - 1]; title = ttl, aspect = DataAspect(), xlabel = "x",
+        ylabel = i == 1 ? "y" : ""
+    )
     cr = cmap === :balance ? ((-1, 1) .* maximum(abs, img_resid)) : crange_log
     hm = heatmap!(ax, coord, coord, img; colormap = cmap, colorrange = cr)
     Colorbar(fig[1, 2i], hm; width = 12)
 end
 
-Label(fig[0, :],
-      "Blended galaxies: Gaussian bulge + Sérsic disk — $(nfree(cm)) free parameters (log₁₀ stretch)";
-      fontsize = 16, font = :bold)
+Label(
+    fig[0, :],
+    "Blended galaxies: Gaussian bulge + Sérsic disk — $(nfree(cm)) free parameters (log₁₀ stretch)";
+    fontsize = 16, font = :bold
+)
 
 save("examples/blended_galaxies_fit.png", fig; px_per_unit = 2)
 println("saved → examples/blended_galaxies_fit.png")

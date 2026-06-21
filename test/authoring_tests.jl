@@ -1,9 +1,9 @@
-@testitem "@model block: registry, default-Free leaves, evaluation" tags=[:authoring] begin
+@testitem "@model block: registry, default-Free leaves, evaluation" tags = [:authoring] begin
     using AstroFit
 
     cm = @model begin
-        narrow = Gaussian1D(amplitude=2.0, sigma=1.0)
-        broad = Gaussian1D(amplitude=0.5, sigma=8.0)
+        narrow = Gaussian1D(amplitude = 2.0, sigma = 1.0)
+        broad = Gaussian1D(amplitude = 0.5, sigma = 8.0)
         narrow + broad
     end
 
@@ -16,11 +16,11 @@
     @test render(cm, 0.0) == render(cm.narrow.model, 0.0) + render(cm.broad.model, 0.0)
 end
 
-@testitem "@model requires named leaves in a begin block" tags=[:authoring] begin
+@testitem "@model requires named leaves in a begin block" tags = [:authoring] begin
     using AstroFit
 
-    g1 = Gaussian1D(amplitude=2.0, mean=0.0, sigma=1.0)
-    g2 = Gaussian1D(amplitude=1.0, mean=5.0, sigma=2.0)
+    g1 = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.0)
+    g2 = Gaussian1D(amplitude = 1.0, mean = 5.0, sigma = 2.0)
 
     @test_throws Exception macroexpand(@__MODULE__, :(AstroFit.@model $g1 + $g2))
 
@@ -35,13 +35,13 @@ end
     @test render(cm, 0.0) == render(g1, 0.0) + render(g2, 0.0)
 end
 
-@testitem "compound operators preserve tree shape and render semantics" tags=[:authoring] begin
+@testitem "compound operators preserve tree shape and render semantics" tags = [:authoring] begin
     using AstroFit
 
     cm = @model begin
-        cont = Linear1D(slope=0.0, intercept=1.0)
-        line = Gaussian1D(amplitude=1.0, mean=0.0, sigma=1.0)
-        absor = Gaussian1D(amplitude=0.3, mean=0.0, sigma=3.0)
+        cont = Linear1D(slope = 0.0, intercept = 1.0)
+        line = Gaussian1D(amplitude = 1.0, mean = 0.0, sigma = 1.0)
+        absor = Gaussian1D(amplitude = 0.3, mean = 0.0, sigma = 3.0)
         cont + line - absor
     end
 
@@ -53,26 +53,26 @@ end
     @test tree.right === cm.absor
 
     shaped = @model begin
-        inner = Linear1D(slope=2.0, intercept=1.0)
-        outer = Gaussian1D(amplitude=1.0, mean=0.0, sigma=1.0)
+        inner = Linear1D(slope = 2.0, intercept = 1.0)
+        outer = Gaussian1D(amplitude = 1.0, mean = 0.0, sigma = 1.0)
         inner |> outer
     end
     @test render(shaped, 0.5) == render(shaped.outer.model, render(shaped.inner.model, 0.5))
 
     composed = @model begin
-        inner = Linear1D(slope=2.0, intercept=1.0)
-        outer = Gaussian1D(amplitude=1.0, mean=0.0, sigma=1.0)
+        inner = Linear1D(slope = 2.0, intercept = 1.0)
+        outer = Gaussian1D(amplitude = 1.0, mean = 0.0, sigma = 1.0)
         outer ∘ inner
     end
     @test render(composed, 0.5) == render(composed.outer.model, render(composed.inner.model, 0.5))
 end
 
-@testitem "@constrain block edits constraints and auto-rebinds" tags=[:authoring] begin
+@testitem "@constrain block edits constraints and auto-rebinds" tags = [:authoring] begin
     using AstroFit
 
     cm = @model begin
-        narrow = Gaussian1D(amplitude=2.0, sigma=1.0)
-        broad = Gaussian1D(amplitude=0.5, sigma=8.0)
+        narrow = Gaussian1D(amplitude = 2.0, sigma = 1.0)
+        broad = Gaussian1D(amplitude = 0.5, sigma = 8.0)
         narrow + broad
     end
 
@@ -97,11 +97,11 @@ end
     @test rebuilt.right.mean == rebuilt.left.mean
 end
 
-@testitem "@constrain block supports fix-current and @free" tags=[:authoring] begin
+@testitem "@constrain block supports fix-current and @free" tags = [:authoring] begin
     using AstroFit
 
     cm = @model begin
-        line = Gaussian1D(amplitude=2.0, mean=0.0, sigma=1.0)
+        line = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.0)
         line
     end
 
@@ -120,12 +120,12 @@ end
     @test cm.line.constraints[3].value == 1.0
 end
 
-@testitem "standalone macros auto-rebind" tags=[:authoring] begin
+@testitem "standalone macros auto-rebind" tags = [:authoring] begin
     using AstroFit
 
     cm = @model begin
-        a = Gaussian1D(amplitude=2.0, sigma=1.0)
-        b = Gaussian1D(amplitude=0.5, sigma=8.0)
+        a = Gaussian1D(amplitude = 2.0, sigma = 1.0)
+        b = Gaussian1D(amplitude = 0.5, sigma = 8.0)
         a + b
     end
 
@@ -146,11 +146,11 @@ end
     @test withparams(cm, params(cm)).right.mean == withparams(cm, params(cm)).left.mean
 end
 
-@testitem "setconstraint is the low-level edit API" tags=[:authoring] begin
+@testitem "setconstraint is the low-level edit API" tags = [:authoring] begin
     using AstroFit
 
     cm = @model begin
-        line = Gaussian1D(amplitude=2.0, mean=0.0, sigma=1.0)
+        line = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.0)
         line
     end
 
@@ -163,63 +163,85 @@ end
     @test_throws ArgumentError setconstraint(cm, :line, :missing, Free())
 end
 
-@testitem "@constrain validation rejects bad tie masters and bad paths" tags=[:authoring] begin
+@testitem "@constrain validation rejects bad tie masters and bad paths" tags = [:authoring] begin
     using AstroFit
 
     cm = @model begin
-        a = Gaussian1D(amplitude=2.0, sigma=1.0)
-        b = Gaussian1D(amplitude=0.5, sigma=8.0)
+        a = Gaussian1D(amplitude = 2.0, sigma = 1.0)
+        b = Gaussian1D(amplitude = 0.5, sigma = 8.0)
         a + b
     end
 
-    @test_throws ArgumentError (m -> @constrain m begin
-        a.sigma -> 2 * a.sigma
-    end)(cm)
+    @test_throws ArgumentError (
+        m -> @constrain m begin
+            a.sigma -> 2 * a.sigma
+        end
+    )(cm)
 
     fixed = cm
     @constrain fixed begin
         a.sigma = 1.0
     end
-    @test_throws ArgumentError (m -> @constrain m begin
-        b.sigma -> a.sigma
-    end)(fixed)
+    @test_throws ArgumentError (
+        m -> @constrain m begin
+            b.sigma -> a.sigma
+        end
+    )(fixed)
 
-    @test_throws ArgumentError (m -> @constrain m begin
-        c.sigma = 1.0
-    end)(cm)
+    @test_throws ArgumentError (
+        m -> @constrain m begin
+            c.sigma = 1.0
+        end
+    )(cm)
 
-    @test_throws ErrorException macroexpand(@__MODULE__,
-        :(AstroFit.@constrain cm begin @free a end))
+    @test_throws ErrorException macroexpand(
+        @__MODULE__,
+        :(
+            AstroFit.@constrain cm begin
+                @free a
+            end
+        )
+    )
 end
 
-@testitem "@model expansion errors: duplicates and reserved names" tags=[:authoring] begin
+@testitem "@model expansion errors: duplicates and reserved names" tags = [:authoring] begin
     using AstroFit
 
-    @test_throws Exception (@model begin
-        g = Gaussian1D()
-        g + g
-    end)
+    @test_throws Exception (
+        @model begin
+            g = Gaussian1D()
+            g + g
+        end
+    )
 
-    @test_throws Exception macroexpand(@__MODULE__,
-        :(AstroFit.@model begin
-              tree = Gaussian1D()
-              tree
-          end))
+    @test_throws Exception macroexpand(
+        @__MODULE__,
+        :(
+            AstroFit.@model begin
+                tree = Gaussian1D()
+                tree
+            end
+        )
+    )
 
-    @test_throws Exception macroexpand(@__MODULE__,
-        :(AstroFit.@model begin
-              priors = Gaussian1D()
-              priors
-          end))
+    @test_throws Exception macroexpand(
+        @__MODULE__,
+        :(
+            AstroFit.@model begin
+                priors = Gaussian1D()
+                priors
+            end
+        )
+    )
 end
 
-@testitem "authored model: withparams stays inferred and allocation-free" tags=[:authoring, :perf] begin
+@testitem "authored model: withparams stays inferred and allocation-free" tags = [:authoring, :perf] begin
     using AstroFit
     using Test: @inferred
 
     cm = @model begin
-        cont = Linear1D(slope=0.0, intercept=1.0)
-        line = Gaussian1D(amplitude=2.0, mean=6563.0, sigma=2.0)
+        cont = Linear1D(slope = 0.0, intercept = 1.0)
+        line = Gaussian1D(amplitude = 2.0, mean = 6563.0, sigma = 2.0)
         cont + line
     end
 
@@ -236,16 +258,16 @@ end
     @test @allocated(probe(cm, p)) == 0
 end
 
-@testitem "hot loop: zero-alloc rebuild with Dual parameters" tags=[:authoring, :perf, :autodiff] begin
+@testitem "hot loop: zero-alloc rebuild with Dual parameters" tags = [:authoring, :perf, :autodiff] begin
     using AstroFit
     using ForwardDiff
     using Test: @inferred
 
     cm = @model begin
-        cont = Linear1D(slope=0.0, intercept=1.0)
-        l1 = Gaussian1D(amplitude=2.0, mean=6563.0, sigma=2.0)
-        l2 = Gaussian1D(amplitude=1.0, mean=4861.0, sigma=2.0)
-        l3 = Gaussian1D(amplitude=0.5, mean=4340.0, sigma=2.0)
+        cont = Linear1D(slope = 0.0, intercept = 1.0)
+        l1 = Gaussian1D(amplitude = 2.0, mean = 6563.0, sigma = 2.0)
+        l2 = Gaussian1D(amplitude = 1.0, mean = 4861.0, sigma = 2.0)
+        l3 = Gaussian1D(amplitude = 0.5, mean = 4340.0, sigma = 2.0)
         cont + l1 + l2 + l3
     end
 
@@ -267,7 +289,7 @@ end
     probe(cm, pd)
     @test @allocated(probe(cm, pd)) == 0
 
-    xs = collect(range(4300.0, 6700.0; length=200))
+    xs = collect(range(4300.0, 6700.0; length = 200))
     ys = render(withparams(cm, p), xs)
     loss(v) = sum(abs2, render(withparams(cm, v), xs) .- ys)
     @test loss(p) == 0.0

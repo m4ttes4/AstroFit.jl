@@ -6,23 +6,29 @@ using Distributions: logpdf
 import AstroFit: logprior, setprior, _validate_priors
 
 function setprior(cm::AstroFit.CompiledModel, leaf::Symbol, field::Symbol, dist)
-    AstroFit._masterfree(cm, leaf, field) || throw(ArgumentError(
-        "prior target `$leaf.$field` must be a free parameter (Free or Bounded)"))
+    AstroFit._masterfree(cm, leaf, field) || throw(
+        ArgumentError(
+            "prior target `$leaf.$field` must be a free parameter (Free or Bounded)"
+        )
+    )
     priors = getfield(cm, :priors)
     key = (leaf, field)
     existing = priors === nothing ? () : priors
     filtered = Tuple(p for p in existing if first(p) != key)
-    AstroFit.CompiledModel(getfield(cm, :tree), (filtered..., (key, dist)))
+    return AstroFit.CompiledModel(getfield(cm, :tree), (filtered..., (key, dist)))
 end
 
 function _validate_priors(cm::AstroFit.CompiledModel)
     priors = getfield(cm, :priors)
     priors === nothing && return nothing
     for ((leaf, field), _) in priors
-        AstroFit._masterfree(cm, leaf, field) || throw(ArgumentError(
-            "prior on `$leaf.$field` targets a parameter that is not free (must be Free or Bounded)"))
+        AstroFit._masterfree(cm, leaf, field) || throw(
+            ArgumentError(
+                "prior on `$leaf.$field` targets a parameter that is not free (must be Free or Bounded)"
+            )
+        )
     end
-    nothing
+    return nothing
 end
 
 function logprior(cm::AstroFit.CompiledModel, p)
@@ -35,7 +41,7 @@ function logprior(cm::AstroFit.CompiledModel, p)
         idx = findfirst(==(target), names)
         s += logpdf(dist, p[idx])
     end
-    s
+    return s
 end
 
 logprior(cm::AstroFit.CompiledModel) = logprior(cm, AstroFit.params(cm))

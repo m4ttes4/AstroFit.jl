@@ -10,10 +10,13 @@ using Accessors: constructorof
 function setconstraint(cm::CompiledModel, leaf::Symbol, field::Symbol, c::AbstractConstraint)
     l = getproperty(cm, leaf)                       # ArgumentError if leaf missing
     i = findfirst(==(field), fieldnames(typeof(l.model)))
-    i === nothing && throw(ArgumentError(
-        "no field `$field` in `$leaf` ($(nameof(typeof(l.model))))"))
+    i === nothing && throw(
+        ArgumentError(
+            "no field `$field` in `$leaf` ($(nameof(typeof(l.model))))"
+        )
+    )
     newleaf = Leaf{leaf}(l.model, Base.setindex(l.constraints, c, i))
-    CompiledModel(_setleaf(getfield(cm, :tree), Val(leaf), newleaf), getfield(cm, :priors))
+    return CompiledModel(_setleaf(getfield(cm, :tree), Val(leaf), newleaf), getfield(cm, :priors))
 end
 
 _setleaf(::Leaf{n}, ::Val{n}, new) where {n} = new
@@ -27,21 +30,24 @@ _setleaf(node, v::Val, new) =
 function validate(cm::CompiledModel)
     _vnode(getfield(cm, :tree), cm)
     _validate_priors(cm)
-    cm
+    return cm
 end
 
-_validate_priors(::CompiledModel{<:Any,Nothing}) = nothing
+_validate_priors(::CompiledModel{<:Any, Nothing}) = nothing
 _vnode(n, cm) = (_vnode(n.left, cm); _vnode(n.right, cm); nothing)
 function _vnode(l::Leaf{lname}, cm) where {lname}
     for (i, c) in enumerate(l.constraints)
         c isa Tied || continue
         for (mleaf, mfield) in _tiepaths(c)
-            _masterfree(cm, mleaf, mfield) || throw(ArgumentError(
-                "tie on `$lname.$(fieldname(typeof(l.model), i))` references " *
-                "`$mleaf.$mfield`, which is not a free parameter (it must exist and be Free or Bounded)"))
+            _masterfree(cm, mleaf, mfield) || throw(
+                ArgumentError(
+                    "tie on `$lname.$(fieldname(typeof(l.model), i))` references " *
+                        "`$mleaf.$mfield`, which is not a free parameter (it must exist and be Free or Bounded)"
+                )
+            )
         end
     end
-    nothing
+    return nothing
 end
 
 _tiepaths(::Tied{Paths}) where {Paths} = Paths
@@ -52,5 +58,5 @@ function _masterfree(cm, leaf::Symbol, field::Symbol)
     l = _nav(getfield(cm, :tree), Val(leaf))
     l === nothing && return false
     i = findfirst(==(field), fieldnames(typeof(l.model)))
-    i === nothing ? false : _isfree(l.constraints[i])
+    return i === nothing ? false : _isfree(l.constraints[i])
 end

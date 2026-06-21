@@ -1,9 +1,9 @@
-@testitem "params and bounds follow the withparams slot order" tags=[:core, :params] begin
+@testitem "params and bounds follow the withparams slot order" tags = [:core, :params] begin
     using AstroFit
 
     cm = @model begin
-        left = Gaussian1D(amplitude=2.0, mean=0.0, sigma=1.0)
-        right = Gaussian1D(amplitude=3.0, mean=5.0, sigma=1.5)
+        left = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.0)
+        right = Gaussian1D(amplitude = 3.0, mean = 5.0, sigma = 1.5)
         left + right
     end
 
@@ -29,12 +29,12 @@
     @test rebuilt.right.sigma == 1.5
 end
 
-@testitem "bounds excludes fixed and tied slots" tags=[:core, :params, :tied] begin
+@testitem "bounds excludes fixed and tied slots" tags = [:core, :params, :tied] begin
     using AstroFit
 
     cm = @model begin
-        left = Gaussian1D(amplitude=2.0, sigma=1.0)
-        right = Gaussian1D(amplitude=9.0)
+        left = Gaussian1D(amplitude = 2.0, sigma = 1.0)
+        right = Gaussian1D(amplitude = 9.0)
         left + right
     end
 
@@ -50,11 +50,11 @@ end
     @test :right_amplitude ∉ paramnames(cm)
 end
 
-@testitem "fix at explicit and current values" tags=[:core, :params] begin
+@testitem "fix at explicit and current values" tags = [:core, :params] begin
     using AstroFit
 
     cm = @model begin
-        line = Gaussian1D(amplitude=1.0, mean=0.0, sigma=1.0)
+        line = Gaussian1D(amplitude = 1.0, mean = 0.0, sigma = 1.0)
         line
     end
 
@@ -75,12 +75,12 @@ end
     @test rebuilt.sigma == 1.0
 end
 
-@testitem "ties are resolved by withparams" tags=[:core, :tied] begin
+@testitem "ties are resolved by withparams" tags = [:core, :tied] begin
     using AstroFit
 
     cm = @model begin
-        left = Gaussian1D(amplitude=2.0, mean=3.0, sigma=1.0)
-        right = Gaussian1D(amplitude=99.0, mean=0.0, sigma=9.0)
+        left = Gaussian1D(amplitude = 2.0, mean = 3.0, sigma = 1.0)
+        right = Gaussian1D(amplitude = 99.0, mean = 0.0, sigma = 9.0)
         left + right
     end
 
@@ -95,27 +95,29 @@ end
     @test m.right.sigma == 4.0
 end
 
-@testitem "validate rejects ties to non-free masters" tags=[:core, :tied] begin
+@testitem "validate rejects ties to non-free masters" tags = [:core, :tied] begin
     using AstroFit
 
     cm = @model begin
-        left = Gaussian1D(sigma=2.0)
-        right = Gaussian1D(sigma=9.0)
+        left = Gaussian1D(sigma = 2.0)
+        right = Gaussian1D(sigma = 9.0)
         left + right
     end
 
-    @test_throws ArgumentError (m -> @constrain m begin
-        left.sigma = 2.0
-        right.sigma -> left.sigma
-    end)(cm)
+    @test_throws ArgumentError (
+        m -> @constrain m begin
+            left.sigma = 2.0
+            right.sigma -> left.sigma
+        end
+    )(cm)
 end
 
-@testitem "rendering a CompiledModel works for scalars and arrays" tags=[:core, :params] begin
+@testitem "rendering a CompiledModel works for scalars and arrays" tags = [:core, :params] begin
     using AstroFit
 
     cm = @model begin
-        line = Gaussian1D(amplitude=2.0, mean=0.0, sigma=1.0)
-        base = Const1D(value=1.0)
+        line = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.0)
+        base = Const1D(value = 1.0)
         line + base
     end
 
@@ -124,13 +126,13 @@ end
     @test render(cm, xs) == [render(cm, x) for x in xs]
 end
 
-@testitem "autodiff flows through tied parameters" tags=[:core, :tied, :autodiff] begin
+@testitem "autodiff flows through tied parameters" tags = [:core, :tied, :autodiff] begin
     using AstroFit
     using ForwardDiff
 
     cm = @model begin
-        left = Gaussian1D(amplitude=1.0, mean=0.0, sigma=1.0)
-        right = Gaussian1D(amplitude=1.0, mean=0.0, sigma=1.0)
+        left = Gaussian1D(amplitude = 1.0, mean = 0.0, sigma = 1.0)
+        right = Gaussian1D(amplitude = 1.0, mean = 0.0, sigma = 1.0)
         left + right
     end
 
@@ -144,14 +146,14 @@ end
     @test g[1] ≈ 3.0
 end
 
-@testitem "withparams is inferred and allocation-free" tags=[:core, :perf] begin
+@testitem "withparams is inferred and allocation-free" tags = [:core, :perf] begin
     using AstroFit
     using ForwardDiff
     using Test: @inferred
 
     cm = @model begin
-        left = Gaussian1D(amplitude=2.0, sigma=1.0)
-        right = Gaussian1D(amplitude=3.0, sigma=1.5)
+        left = Gaussian1D(amplitude = 2.0, sigma = 1.0)
+        right = Gaussian1D(amplitude = 3.0, sigma = 1.5)
         left + right
     end
 

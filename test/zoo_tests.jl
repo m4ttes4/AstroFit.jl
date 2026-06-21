@@ -1,9 +1,9 @@
-@testitem "zoo-style spectral line factory uses current constraints" tags=[:zoo] begin
+@testitem "zoo-style spectral line factory uses current constraints" tags = [:zoo] begin
     using AstroFit
 
-    function emission_line(; center, amplitude=2.0, sigma=1.5, center_window=2.0)
+    function emission_line(; center, amplitude = 2.0, sigma = 1.5, center_window = 2.0)
         cm = @model begin
-            line = Gaussian1D(amplitude=amplitude, mean=center, sigma=sigma)
+            line = Gaussian1D(amplitude = amplitude, mean = center, sigma = sigma)
             line
         end
         @constrain cm begin
@@ -14,7 +14,7 @@
         cm
     end
 
-    emission = emission_line(center=6563.0)
+    emission = emission_line(center = 6563.0)
     @test emission isa CompiledModel
     @test nfree(emission) == 3
 
@@ -25,7 +25,7 @@
     @test render(emission, 6563.0) ≈ 2.0
 end
 
-@testitem "zoo-style doublet ties physical ratios" tags=[:zoo, :tied] begin
+@testitem "zoo-style doublet ties physical ratios" tags = [:zoo, :tied] begin
     using AstroFit
 
     blue_center = 4959.0
@@ -33,8 +33,8 @@ end
     ratio = 2.98
 
     doublet = @model begin
-        blue = Gaussian1D(amplitude=1.0, mean=blue_center, sigma=2.0)
-        red = Gaussian1D(amplitude=ratio, mean=red_center, sigma=2.0)
+        blue = Gaussian1D(amplitude = 1.0, mean = blue_center, sigma = 2.0)
+        red = Gaussian1D(amplitude = ratio, mean = red_center, sigma = 2.0)
         blue + red
     end
 
@@ -55,12 +55,12 @@ end
     @test :red_sigma ∉ paramnames(doublet)
 end
 
-@testitem "zoo-style spectrum composition namespaces flat leaves" tags=[:zoo] begin
+@testitem "zoo-style spectrum composition namespaces flat leaves" tags = [:zoo] begin
     using AstroFit
 
     spectrum = @model begin
-        continuum = Linear1D(slope=1e-4, intercept=1.0)
-        line = Gaussian1D(amplitude=2.0, mean=6563.0, sigma=1.5)
+        continuum = Linear1D(slope = 1.0e-4, intercept = 1.0)
+        line = Gaussian1D(amplitude = 2.0, mean = 6563.0, sigma = 1.5)
         continuum + line
     end
 
@@ -77,10 +77,10 @@ end
     @test render(spectrum, 6563.0) > continuum_at_center
 end
 
-@testitem "zoo-style 2D line profiles render and constrain physical params" tags=[:zoo, :twod] begin
+@testitem "zoo-style 2D line profiles render and constrain physical params" tags = [:zoo, :twod] begin
     using AstroFit
 
-    struct Gaussian2D{T<:Real} <: AbstractModel
+    struct Gaussian2D{T <: Real} <: AbstractModel
         amplitude::T
         x0::T
         y0::T
@@ -89,8 +89,12 @@ end
     end
 
     AstroFit.render(m::Gaussian2D, x::Number, y::Number) =
-        m.amplitude * exp(-0.5 * (((x - m.x0) / m.sigma_x)^2 +
-                                  ((y - m.y0) / m.sigma_y)^2))
+        m.amplitude * exp(
+        -0.5 * (
+            ((x - m.x0) / m.sigma_x)^2 +
+                ((y - m.y0) / m.sigma_y)^2
+        )
+    )
 
     scene = @model begin
         bulge = Gaussian2D(3.0, 1.0, -2.0, 2.0, 1.0)

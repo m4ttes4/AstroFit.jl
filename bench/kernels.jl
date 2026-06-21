@@ -11,7 +11,7 @@
 using AstroFit
 
 # Rest-frame wavelengths (Å), matching examples/halpha_nii_fit.jl
-const λ_Ha    = 6562.8
+const λ_Ha = 6562.8
 const λ_NII_r = 6583.4
 const λ_NII_b = 6548.1
 
@@ -29,16 +29,16 @@ function small_models()
     @constrain con begin
         cont.slope = 0.1
         line.amplitude in (0.0, Inf)
-        line.mean      in (-5.0, 5.0)
-        line.sigma     in (0.3, 10.0)
+        line.mean in (-5.0, 5.0)
+        line.sigma in (0.3, 10.0)
     end
-    free, con
+    return free, con
 end
 
 # slope fixed at 0.1 → 4 free: p = [intercept, A, μ, σ]
 function hand_small_con(p, x)
     intercept, A, μ, σ = p
-    @. 0.1 * x + intercept + A * exp(-((x - μ) / σ)^2 / 2)
+    return @. 0.1 * x + intercept + A * exp(-((x - μ) / σ)^2 / 2)
 end
 
 # ===========================================================================
@@ -47,26 +47,26 @@ end
 
 function complex_models()
     free = @model begin
-        cont  = Linear1D(slope = 0.0, intercept = 1.0)
-        ha    = Gaussian1D(amplitude = 10.0, mean = λ_Ha,    sigma = 3.0)
-        nii_r = Gaussian1D(amplitude = 3.0,  mean = λ_NII_r, sigma = 3.0)
-        nii_b = Gaussian1D(amplitude = 1.0,  mean = λ_NII_b, sigma = 3.0)
+        cont = Linear1D(slope = 0.0, intercept = 1.0)
+        ha = Gaussian1D(amplitude = 10.0, mean = λ_Ha, sigma = 3.0)
+        nii_r = Gaussian1D(amplitude = 3.0, mean = λ_NII_r, sigma = 3.0)
+        nii_b = Gaussian1D(amplitude = 1.0, mean = λ_NII_b, sigma = 3.0)
         cont + ha + nii_r + nii_b
     end
     con = free
     @constrain con begin
         cont.intercept in (0.0, Inf)
-        ha.amplitude   in (0.0, Inf)
-        ha.mean        in (λ_Ha - 30, λ_Ha + 30)
-        ha.sigma       in (0.5, 20.0)
+        ha.amplitude in (0.0, Inf)
+        ha.mean in (λ_Ha - 30, λ_Ha + 30)
+        ha.sigma in (0.5, 20.0)
         nii_b.amplitude -> ha.amplitude / 3.0
         nii_r.amplitude -> (3.06 / 3.0) * ha.amplitude
-        nii_r.mean      -> (λ_NII_r / λ_Ha) * ha.mean
-        nii_b.mean      -> (λ_NII_b / λ_Ha) * ha.mean
-        nii_r.sigma     -> ha.sigma
-        nii_b.sigma     -> ha.sigma
+        nii_r.mean -> (λ_NII_r / λ_Ha) * ha.mean
+        nii_b.mean -> (λ_NII_b / λ_Ha) * ha.mean
+        nii_r.sigma -> ha.sigma
+        nii_b.sigma -> ha.sigma
     end
-    free, con
+    return free, con
 end
 
 # bounds + 6 ties → 5 free:  p = [slope, intercept, ha.A, ha.μ, ha.σ]
@@ -77,10 +77,10 @@ function hand_complex_con(p, x)
     bA = A / 3.0
     rμ = (λ_NII_r / λ_Ha) * μ
     bμ = (λ_NII_b / λ_Ha) * μ
-    @. s * x + ic +
-       A  * exp(-((x - μ)  / σ)^2 / 2) +
-       rA * exp(-((x - rμ) / σ)^2 / 2) +
-       bA * exp(-((x - bμ) / σ)^2 / 2)
+    return @. s * x + ic +
+        A * exp(-((x - μ) / σ)^2 / 2) +
+        rA * exp(-((x - rμ) / σ)^2 / 2) +
+        bA * exp(-((x - bμ) / σ)^2 / 2)
 end
 
 # ===========================================================================
@@ -96,24 +96,32 @@ end
 # ===========================================================================
 
 function nbump_models(N)
-    decls = [:( $(Symbol("g", i)) =
-                  Gaussian1D(amplitude = 1.0, mean = $(Float64(i)), sigma = 1.0) )
-             for i in 1:N]
-    sumexpr    = foldl((a, b) -> :($a + $b), (Symbol("g", i) for i in 1:N))
+    decls = [
+        :(
+                $(Symbol("g", i)) =
+                Gaussian1D(amplitude = 1.0, mean = $(Float64(i)), sigma = 1.0)
+            )
+            for i in 1:N
+    ]
+    sumexpr = foldl((a, b) -> :($a + $b), (Symbol("g", i) for i in 1:N))
     modelblock = Expr(:block, decls..., sumexpr)
 
-    ties      = [:( $(Symbol("g", i)).amplitude -> g1.amplitude * 0.5 )
-                 for i in 2:N]
-    consblock = Expr(:block, :( g1.amplitude in (0.0, Inf) ), ties...)
+    ties = [
+        :($(Symbol("g", i)).amplitude -> g1.amplitude * 0.5)
+            for i in 2:N
+    ]
+    consblock = Expr(:block, :(g1.amplitude in (0.0, Inf)), ties...)
 
-    Core.eval(@__MODULE__, quote
-        let
-            _free = @model $modelblock
-            _con = _free
-            @constrain _con $consblock
-            (_free, _con)
+    return Core.eval(
+        @__MODULE__, quote
+            let
+                _free = @model $modelblock
+                _con = _free
+                @constrain _con $consblock
+                (_free, _con)
+            end
         end
-    end)
+    )
 end
 
 function hand_nbump_con(p, x, N)
@@ -125,5 +133,5 @@ function hand_nbump_con(p, x, N)
         Ai = i == 1 ? A : 0.5 * A
         y .+= @. Ai * exp(-((x - μ) / σ)^2 / 2)
     end
-    y
+    return y
 end

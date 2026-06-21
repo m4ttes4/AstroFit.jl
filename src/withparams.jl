@@ -21,12 +21,12 @@ function _slotmap!(map, T, counter)
         _slotmap!(map, L, counter)
         _slotmap!(map, R, counter)
     end
-    map
+    return map
 end
 
 # How one leaf field's value is computed.
 function _fieldexpr(Ci, name, fname, i, acc, slots)
-    if Ci <: Free || Ci <: Bounded
+    return if Ci <: Free || Ci <: Bounded
         :(p[$(slots[(name, fname)])])
     elseif Ci <: Fixed
         :(($acc).constraints[$i].value)
@@ -41,20 +41,26 @@ end
 # Expression that reconstructs one subtree, bare (no Leaf wrapper). `acc` reaches this
 # node in the runtime tree, needed only for Fixed/Tied runtime fields.
 function _treeexpr(T, acc, slots)
-    if T <: Leaf
+    return if T <: Leaf
         name, M, C = T.parameters
-        fields = (_fieldexpr(fieldtypes(C)[i], name, fieldnames(M)[i], i, acc, slots)
-                  for i in 1:fieldcount(M))
+        fields = (
+            _fieldexpr(fieldtypes(C)[i], name, fieldnames(M)[i], i, acc, slots)
+                for i in 1:fieldcount(M)
+        )
         :($(constructorof(M))($(fields...)))
     else
         L, R = T.parameters
-        :($(T.name.wrapper)($(_treeexpr(L, :(($acc).left), slots)),
-                            $(_treeexpr(R, :(($acc).right), slots))))
+        :(
+            $(T.name.wrapper)(
+                $(_treeexpr(L, :(($acc).left), slots)),
+                $(_treeexpr(R, :(($acc).right), slots))
+            )
+        )
     end
 end
 
 @generated function withparams(cm::CompiledModel, p)
     T = cm.parameters[1]
-    slots = _slotmap!(Dict{Tuple{Symbol,Symbol},Int}(), T, Ref(0))
-    _treeexpr(T, :(getfield(cm, :tree)), slots)
+    slots = _slotmap!(Dict{Tuple{Symbol, Symbol}, Int}(), T, Ref(0))
+    return _treeexpr(T, :(getfield(cm, :tree)), slots)
 end

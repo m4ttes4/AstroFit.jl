@@ -20,7 +20,7 @@ end
 
 # value = f(master₁ … masterₙ). Masters are referenced by path and must be free.
 # Paths live in the type so the @generated withparams can read them (decision 8).
-struct Tied{Paths,F} <: AbstractConstraint
+struct Tied{Paths, F} <: AbstractConstraint
     f::F
 end
-Tied(paths::Tuple, f::F) where {F} = Tied{paths,F}(f)
+Tied(paths::Tuple, f::F) where {F} = Tied{paths, F}(f)

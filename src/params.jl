@@ -18,7 +18,7 @@ _params(n) = (_params(n.left)..., _params(n.right)...)
 # Box bounds as (lower, upper): Free → (-Inf, Inf), Bounded → its (lower, upper).
 function bounds(cm::CompiledModel)
     bs = _bounds(getfield(cm, :tree))
-    collect(first.(bs)), collect(last.(bs))
+    return collect(first.(bs)), collect(last.(bs))
 end
 _bound(::Free) = (-Inf, Inf)
 _bound(b::Bounded) = (b.lower, b.upper)
@@ -28,6 +28,8 @@ _bounds(n) = (_bounds(n.left)..., _bounds(n.right)...)
 # Slot labels for fit output: :<leafname>_<fieldname>.
 paramnames(cm::CompiledModel) = collect(_pnames(getfield(cm, :tree)))
 _pnames(l::Leaf{name}) where {name} =
-    Tuple(Symbol(name, :_, fieldname(typeof(l.model), i))
-          for (i, c) in enumerate(l.constraints) if _isfree(c))
+    Tuple(
+    Symbol(name, :_, fieldname(typeof(l.model), i))
+        for (i, c) in enumerate(l.constraints) if _isfree(c)
+)
 _pnames(n) = (_pnames(n.left)..., _pnames(n.right)...)

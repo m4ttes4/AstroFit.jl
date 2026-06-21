@@ -2,15 +2,15 @@
 # text/plain CompiledModel show draws a colored, flattened tree.
 # ponytail: colors via stdlib printstyled (honors IOContext :color); no Crayons dep.
 
-const _NODE  = Union{Sum,Difference,Product,Quotient,Pipe}
-const _ASSOC = Union{Sum,Product}            # only these flatten into sibling chains
+const _NODE = Union{Sum, Difference, Product, Quotient, Pipe}
+const _ASSOC = Union{Sum, Product}            # only these flatten into sibling chains
 const _TIED_COLOR = 208                      # ANSI 256-color orange
 
-_opsym(::Sum)        = "+"
+_opsym(::Sum) = "+"
 _opsym(::Difference) = "-"
-_opsym(::Product)    = "*"
-_opsym(::Quotient)   = "/"
-_opsym(::Pipe)       = "|>"
+_opsym(::Product) = "*"
+_opsym(::Quotient) = "/"
+_opsym(::Pipe) = "|>"
 
 _leafname(::Leaf{n}) where {n} = n
 _fmt(v::AbstractFloat) = string(round(v; sigdigits = 4))
@@ -24,27 +24,31 @@ function _expr(node, parentop = nothing)
     node isa _NODE || return sprint(show, node)
     op = _opsym(node)
     inner = "$(_expr(node.left, op)) $op $(_expr(node.right, op))"
-    (parentop !== nothing && parentop != op) ? "($inner)" : inner
+    return (parentop !== nothing && parentop != op) ? "($inner)" : inner
 end
 
-Base.show(io::IO, m::_NODE)              = print(io, _expr(m))
-Base.show(io::IO, l::Leaf)               = print(io, _leafname(l))
-Base.show(io::IO, cm::CompiledModel)     = print(io, _expr(getfield(cm, :tree)))
+Base.show(io::IO, m::_NODE) = print(io, _expr(m))
+Base.show(io::IO, l::Leaf) = print(io, _leafname(l))
+Base.show(io::IO, cm::CompiledModel) = print(io, _expr(getfield(cm, :tree)))
 
 # --- constraint summaries
 _counts(cm::CompiledModel) = _counts(getfield(cm, :tree))
 _counts(n) = _add(_counts(n.left), _counts(n.right))
 function _counts(l::Leaf)
     cs = l.constraints
-    (free = count(c -> c isa Free, cs),
-     bounds = count(c -> c isa Bounded, cs),
-     fixed = count(c -> c isa Fixed, cs),
-     tied = count(c -> c isa Tied, cs))
+    return (
+        free = count(c -> c isa Free, cs),
+        bounds = count(c -> c isa Bounded, cs),
+        fixed = count(c -> c isa Fixed, cs),
+        tied = count(c -> c isa Tied, cs),
+    )
 end
-_add(a, b) = (free = a.free + b.free,
-              bounds = a.bounds + b.bounds,
-              fixed = a.fixed + b.fixed,
-              tied = a.tied + b.tied)
+_add(a, b) = (
+    free = a.free + b.free,
+    bounds = a.bounds + b.bounds,
+    fixed = a.fixed + b.fixed,
+    tied = a.tied + b.tied,
+)
 
 # --- flattened children of a tree node
 _kids(node) = node isa _ASSOC ?
@@ -57,25 +61,27 @@ function _flatten!(acc, node, op)
     else
         push!(acc, node)
     end
-    acc
+    return acc
 end
 
 # --- the tree view
 function _header(io, title, counts)
     printstyled(io, title; bold = true)
-    for (n, label, color) in ((counts.free, "free", :green),
-                              (counts.bounds, "bounds", :blue),
-                              (counts.fixed, "fixed", :red),
-                              (counts.tied, "tied", _TIED_COLOR))
+    for (n, label, color) in (
+            (counts.free, "free", :green),
+            (counts.bounds, "bounds", :blue),
+            (counts.fixed, "fixed", :red),
+            (counts.tied, "tied", _TIED_COLOR),
+        )
         printstyled(io, "  ·  "; color = :light_black)
         _stat(io, n, label, color)
     end
-    println(io)
+    return println(io)
 end
 
 function Base.show(io::IO, ::MIME"text/plain", l::Leaf)
     _header(io, "Leaf", _counts(l))
-    _tree(io, l, "", true, true)
+    return _tree(io, l, "", true, true)
 end
 
 function Base.show(io::IO, ::MIME"text/plain", cm::CompiledModel)
@@ -83,25 +89,27 @@ function Base.show(io::IO, ::MIME"text/plain", cm::CompiledModel)
     _header(io, "CompiledModel", _counts(cm))
     print(io, "formula: ")
     println(io, _expr(tree))
-    _tree(io, tree, "", true, true)
+    return _tree(io, tree, "", true, true)
 end
 
 function _stat(io, n, label, color)
     print(io, n, " ")
-    printstyled(io, label; color, bold = true)
+    return printstyled(io, label; color, bold = true)
 end
 
 function _tree(io, node, prefix, islast, isroot = false)
     isroot || print(io, prefix, islast ? "└─ " : "├─ ")
     child = isroot ? prefix : prefix * (islast ? "   " : "│  ")
-    if node isa Leaf
+    return if node isa Leaf
         _leafline(io, node); println(io)
         fields = fieldnames(typeof(node.model))
         isempty(fields) && return
         width = maximum(length(string(f)) for f in fields)
         for (i, f) in enumerate(fields)
-            _fieldline(io, child, i == length(fields), f,
-                       getfield(node.model, f), node.constraints[i], width)
+            _fieldline(
+                io, child, i == length(fields), f,
+                getfield(node.model, f), node.constraints[i], width
+            )
         end
     else
         printstyled(io, _opsym(node), "\n"; color = :light_black, bold = true)
@@ -115,7 +123,7 @@ end
 function _leafline(io, l)
     printstyled(io, _leafname(l); color = :cyan, bold = true)
     printstyled(io, " :: "; color = :light_black)
-    printstyled(io, nameof(typeof(l.model)); color = :blue)
+    return printstyled(io, nameof(typeof(l.model)); color = :blue)
 end
 
 function _fieldline(io, prefix, islast, f, v, c, width)
@@ -123,24 +131,24 @@ function _fieldline(io, prefix, islast, f, v, c, width)
     print(io, rpad(string(f), width))
     print(io, "  ", rpad(_fieldvalue(v, c), 8), "  ")
     _constraint(io, c)
-    println(io)
+    return println(io)
 end
 
 _fieldvalue(v, c::Fixed) = _fmt(c.value)
 _fieldvalue(v, _) = _fmt(v)
 
 function _constraint(io, ::Free)
-    printstyled(io, "free"; color = :green, bold = true)
+    return printstyled(io, "free"; color = :green, bold = true)
 end
 function _constraint(io, c::Bounded)
     printstyled(io, "bounds"; color = :blue, bold = true)
-    print(io, " [", _fmt(c.lower), ", ", _fmt(c.upper), "]")
+    return print(io, " [", _fmt(c.lower), ", ", _fmt(c.upper), "]")
 end
 function _constraint(io, ::Fixed)
-    printstyled(io, "fixed"; color = :red, bold = true)
+    return printstyled(io, "fixed"; color = :red, bold = true)
 end
 function _constraint(io, c::Tied)
     printstyled(io, "tied"; color = _TIED_COLOR, bold = true)
-    print(io, " -> ", _masters(c))
+    return print(io, " -> ", _masters(c))
 end
 _masters(::Tied{P}) where {P} = join(("$l.$f" for (l, f) in P), ", ")

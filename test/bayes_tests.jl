@@ -1,9 +1,9 @@
-@testitem "priors: stored separately from mechanical constraints" tags=[:bayes] begin
+@testitem "priors: stored separately from mechanical constraints" tags = [:bayes] begin
     using AstroFit
     using Distributions
 
     cm = @model begin
-        line = Gaussian1D(amplitude=2.0, mean=0.0, sigma=1.0)
+        line = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.0)
         line
     end
 
@@ -21,12 +21,12 @@
     @test logprior(cm) == logpdf(prior, cm.line.model.sigma)
 end
 
-@testitem "priors: user priors override by target" tags=[:bayes] begin
+@testitem "priors: user priors override by target" tags = [:bayes] begin
     using AstroFit
     using Distributions
 
     cm = @model begin
-        line = Gaussian1D(amplitude=1.0, mean=0.0, sigma=1.0)
+        line = Gaussian1D(amplitude = 1.0, mean = 0.0, sigma = 1.0)
         line
     end
 
@@ -46,13 +46,13 @@ end
     @test only(priors)[2] === user
 end
 
-@testitem "priors reject fixed and tied targets" tags=[:bayes] begin
+@testitem "priors reject fixed and tied targets" tags = [:bayes] begin
     using AstroFit
     using Distributions
 
     cm = @model begin
-        a = Gaussian1D(amplitude=2.0, sigma=1.0)
-        b = Gaussian1D(amplitude=1.0, sigma=9.0)
+        a = Gaussian1D(amplitude = 2.0, sigma = 1.0)
+        b = Gaussian1D(amplitude = 1.0, sigma = 9.0)
         a + b
     end
 
@@ -60,24 +60,28 @@ end
     @constrain fixed begin
         a.sigma
     end
-    @test_throws ArgumentError (m -> @constrain m begin
-        a.sigma ~ LogNormal(0.0, 1.0)
-    end)(fixed)
+    @test_throws ArgumentError (
+        m -> @constrain m begin
+            a.sigma ~ LogNormal(0.0, 1.0)
+        end
+    )(fixed)
 
     tied = cm
     @constrain tied begin
         b.sigma -> a.sigma
     end
-    @test_throws ArgumentError (m -> @constrain m begin
-        b.sigma ~ LogNormal(0.0, 1.0)
-    end)(tied)
+    @test_throws ArgumentError (
+        m -> @constrain m begin
+            b.sigma ~ LogNormal(0.0, 1.0)
+        end
+    )(tied)
 end
 
-@testitem "loglikelihood: Gaussian independent errors" tags=[:bayes] begin
+@testitem "loglikelihood: Gaussian independent errors" tags = [:bayes] begin
     using AstroFit
 
     cm = @model begin
-        c = Const1D(value=2.0)
+        c = Const1D(value = 2.0)
         c
     end
 
@@ -93,11 +97,11 @@ end
     @test_throws ArgumentError AstroFit.loglikelihood(cm, x, y[1:2], err)
 end
 
-@testitem "loglikelihood: noise-free fit uses unit variance" tags=[:bayes] begin
+@testitem "loglikelihood: noise-free fit uses unit variance" tags = [:bayes] begin
     using AstroFit
 
     cm = @model begin
-        c = Const1D(value=2.0)
+        c = Const1D(value = 2.0)
         c
     end
 
@@ -109,19 +113,19 @@ end
     @test AstroFit.loglikelihood(cm, x, y, nothing) == expected
     @test AstroFit.loglikelihood(cm, params(cm), x, y, nothing) == expected
     @test AstroFit.loglikelihood(cm, x, y, nothing) ==
-          AstroFit.loglikelihood(cm, x, y, ones(length(y)))
+        AstroFit.loglikelihood(cm, x, y, ones(length(y)))
     @test_throws ArgumentError AstroFit.loglikelihood(cm, x, y[1:2], nothing)
     @test logposterior(cm, x, y, nothing) == AstroFit.loglikelihood(cm, x, y, nothing)
 end
 
-@testitem "loglikelihood: allocation-free hot path" tags=[:bayes] begin
+@testitem "loglikelihood: allocation-free hot path" tags = [:bayes] begin
     using AstroFit
 
     cm = @model begin
-        g = Gaussian1D(amplitude=2.0, mean=0.0, sigma=1.0)
+        g = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.0)
         g
     end
-    mk(n) = (x = collect(range(-3, 3; length=n)); (x, render(cm, x), fill(0.1, n)))
+    mk(n) = (x = collect(range(-3, 3; length = n)); (x, render(cm, x), fill(0.1, n)))
 
     x1, y1, e1 = mk(50)
     x2, y2, e2 = mk(5000)
@@ -134,11 +138,11 @@ end
     @test a2 < 512
 end
 
-@testitem "objective: solver-agnostic minimisation target" tags=[:bayes] begin
+@testitem "objective: solver-agnostic minimisation target" tags = [:bayes] begin
     using AstroFit
 
     cm = @model begin
-        g = Gaussian1D(amplitude=1.0, mean=0.0, sigma=1.0)
+        g = Gaussian1D(amplitude = 1.0, mean = 0.0, sigma = 1.0)
         g
     end
     x = collect(-2.0:0.5:2.0)
@@ -149,7 +153,7 @@ end
     @test f0(u) == -logposterior(cm, u, x, y, nothing)
 
     err = fill(0.5, length(y))
-    fe = objective(cm, x, y; err=err)
+    fe = objective(cm, x, y; err = err)
     @test fe(u) == -logposterior(cm, u, x, y, err)
 
     u2 = u .+ 0.3

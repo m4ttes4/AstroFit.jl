@@ -30,7 +30,7 @@ macro model(blk)
         end
     end
     final === nothing && error("@model: missing composition expression")
-    quote
+    return quote
         $(defs...)
         _compiled($final)
     end
@@ -44,9 +44,11 @@ _defaults(m) = ntuple(_ -> Free(), fieldcount(typeof(m)))
 function _compiled(tree)
     names = Symbol[]
     _leafnames!(names, tree)
-    allunique(names) || error("@model: leaf(s) used more than once: " *
-        join(unique(n for n in names if count(==(n), names) > 1), ", "))
-    CompiledModel(tree, nothing)
+    allunique(names) || error(
+        "@model: leaf(s) used more than once: " *
+            join(unique(n for n in names if count(==(n), names) > 1), ", ")
+    )
+    return CompiledModel(tree, nothing)
 end
 
 _leafnames!(acc, l::Leaf{name}) where {name} = (push!(acc, name); acc)
@@ -60,23 +62,25 @@ _leafnames!(acc, m) = (_leafnames!(acc, m.left); _leafnames!(acc, m.right); acc)
 function _splitpath(e)
     e isa Expr && e.head === :. && e.args[1] isa Expr && e.args[1].head === :. ||
         error("expected `model.leaf.field`, got `$e`")
-    (e.args[1].args[1], e.args[1].args[2].value, e.args[2].value)
+    return (e.args[1].args[1], e.args[1].args[2].value, e.args[2].value)
 end
 
 # @tie RHS → (paths_expr, lambda). Every `root.leaf.field` becomes a fresh arg (masters
 # collected in order); all other code is left intact.
 function _tiewalk(rhs, root)
-    paths = Tuple{Symbol,Symbol}[]; args = Symbol[]
+    paths = Tuple{Symbol, Symbol}[]; args = Symbol[]
     walk(x) =
-        if x isa Expr && x.head === :. && x.args[1] isa Expr &&
-           x.args[1].head === :. && x.args[1].args[1] == root
-            (_, l, f) = _splitpath(x); g = gensym(); push!(paths, (l, f)); push!(args, g); g
-        elseif x isa Expr
-            Expr(x.head, map(walk, x.args)...)
-        else; x end
+    if x isa Expr && x.head === :. && x.args[1] isa Expr &&
+            x.args[1].head === :. && x.args[1].args[1] == root
+        (_, l, f) = _splitpath(x); g = gensym(); push!(paths, (l, f)); push!(args, g); g
+    elseif x isa Expr
+        Expr(x.head, map(walk, x.args)...)
+    else
+        x
+    end
     newrhs = walk(rhs)
     pe = Expr(:tuple, (Expr(:tuple, QuoteNode(l), QuoteNode(f)) for (l, f) in paths)...)
-    (pe, Expr(:->, Expr(:tuple, args...), newrhs))
+    return (pe, Expr(:->, Expr(:tuple, args...), newrhs))
 end
 
 _setexpr(root, l, f, c) = :(setconstraint($root, $(QuoteNode(l)), $(QuoteNode(f)), $c))
@@ -90,7 +94,7 @@ _fixcurrent(root, l, f) = :(Fixed(getfield(getproperty($root, $(QuoteNode(l))).m
 # ---------------------------------------------------------------------------
 
 macro fix(a)
-    if a isa Expr && a.head === :(=)
+    return if a isa Expr && a.head === :(=)
         (r, l, f) = _splitpath(a.args[1])
         r isa Symbol || error("nested paths require @constrain block")
         c = :(Fixed($(esc(a.args[2]))))
@@ -113,7 +117,7 @@ macro tie(a)
     r isa Symbol || error("nested paths require @constrain block")
     (pe, lam) = _tiewalk(rhs, r)
     c = :(Tied($pe, $(esc(lam))))
-    :($(esc(r)) = $(_setexpr(esc(r), l, f, c)))
+    return :($(esc(r)) = $(_setexpr(esc(r), l, f, c)))
 end
 
 macro bound(a)
@@ -125,13 +129,13 @@ macro bound(a)
     r isa Symbol || error("nested paths require @constrain block")
     lo, hi = a.args[3].args
     c = :(Bounded($(esc(lo)), $(esc(hi))))
-    :($(esc(r)) = $(_setexpr(esc(r), l, f, c)))
+    return :($(esc(r)) = $(_setexpr(esc(r), l, f, c)))
 end
 
 macro free(p)
     (r, l, f) = _splitpath(p)
     r isa Symbol || error("nested paths require @constrain block")
-    :($(esc(r)) = $(_setexpr(esc(r), l, f, :(Free()))))
+    return :($(esc(r)) = $(_setexpr(esc(r), l, f, :(Free()))))
 end
 
 macro prior(a)
@@ -139,7 +143,7 @@ macro prior(a)
         error("@prior expects `model.leaf.field ~ distribution`")
     (r, l, f) = _splitpath(a.args[2])
     r isa Symbol || error("nested paths require @constrain block")
-    :($(esc(r)) = setprior($(esc(r)), $(QuoteNode(l)), $(QuoteNode(f)), $(esc(a.args[3]))))
+    return :($(esc(r)) = setprior($(esc(r)), $(QuoteNode(l)), $(QuoteNode(f)), $(esc(a.args[3]))))
 end
 
 # ---------------------------------------------------------------------------
@@ -158,16 +162,18 @@ end
 # Prefix bare leaf.field with the gensym root: narrow.amplitude → g.narrow.amplitude.
 # ponytail: also catches dotted caller data (`= point.x`) — snapshot to a local first.
 _inject(root, e) =
-    if e isa Expr && e.head === :. && e.args[1] isa Symbol && e.args[2] isa QuoteNode
-        Expr(:., Expr(:., root, QuoteNode(e.args[1])), e.args[2])
-    elseif e isa Expr
-        Expr(e.head, (_inject(root, a) for a in e.args)...)
-    else; e end
+if e isa Expr && e.head === :. && e.args[1] isa Symbol && e.args[2] isa QuoteNode
+    Expr(:., Expr(:., root, QuoteNode(e.args[1])), e.args[2])
+elseif e isa Expr
+    Expr(e.head, (_inject(root, a) for a in e.args)...)
+else
+    e
+end
 
 macro constrain(cm, blk)
     blk isa Expr && blk.head === :block || error("@constrain expects a begin…end block")
     cm isa Symbol || error("@constrain: first argument must be a variable name")
-    g = gensym(:cm); seen = Set{Tuple{Symbol,Symbol}}()
+    g = gensym(:cm); seen = Set{Tuple{Symbol, Symbol}}()
     out = Any[:($g = $(esc(cm)))]
     for s in blk.args
         s isa LineNumberNode && continue
@@ -217,10 +223,10 @@ macro constrain(cm, blk)
         end
     end
     push!(out, :($(esc(cm)) = validate($g)))
-    Expr(:block, out...)
+    return Expr(:block, out...)
 end
 
 function _checkdup!(seen, l, f)
     (l, f) in seen && error("@constrain: `$l.$f` constrained twice")
-    push!(seen, (l, f))
+    return push!(seen, (l, f))
 end
