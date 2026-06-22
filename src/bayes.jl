@@ -58,3 +58,28 @@ logposterior(cm::CompiledModel, x, y, err) =
 
 objective(cm::CompiledModel, x, y; err = nothing) =
     u -> -logposterior(cm, u, x, y, err)
+
+
+    
+struct PosteriorTarget{CM, X, Y, E}
+    cm::CM
+    x::X
+    y::Y
+    err::E
+    lb::Vector{Float64}
+    ub::Vector{Float64}
+    names::Vector{Symbol}
+end
+
+function PosteriorTarget(cm::CompiledModel, x, y, err = nothing)
+    _check_data(x, y, err)
+    lb, ub = bounds(cm)
+    return PosteriorTarget(cm, x, y, err, lb, ub, paramnames(cm))
+end
+
+function (lp::PosteriorTarget)(p)
+    for i in eachindex(p)
+        (p[i] < lp.lb[i] || p[i] > lp.ub[i]) && return -Inf
+    end
+    return logposterior(lp.cm, p, lp.x, lp.y, lp.err)
+end

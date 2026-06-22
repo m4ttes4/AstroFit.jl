@@ -20,7 +20,7 @@ function setconstraint(cm::CompiledModel, leaf::Symbol, field::Symbol, c::Abstra
 end
 
 _setleaf(::Leaf{n}, ::Val{n}, new) where {n} = new
-_setleaf(l::Leaf, ::Val, new) = l
+_setleaf(l::Leaf, ::Val, _) = l
 _setleaf(node, v::Val, new) =
     constructorof(typeof(node))(_setleaf(node.left, v, new), _setleaf(node.right, v, new))
 
@@ -52,7 +52,7 @@ end
 
 _tiepaths(::Tied{Paths}) where {Paths} = Paths
 
-# Is (leaf, field) a free slot? Missing leaf/field → not free (ponytail: one boolean, the
+# Is (leaf, field) a free slot? Missing leaf/field → not free (one boolean, the
 # caller's message covers both "missing" and "fixed").
 function _masterfree(cm, leaf::Symbol, field::Symbol)
     l = _nav(getfield(cm, :tree), Val(leaf))

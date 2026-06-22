@@ -51,7 +51,7 @@ function _compiled(tree)
     return CompiledModel(tree, nothing)
 end
 
-_leafnames!(acc, l::Leaf{name}) where {name} = (push!(acc, name); acc)
+_leafnames!(acc, ::Leaf{name}) where {name} = (push!(acc, name); acc)
 _leafnames!(acc, m) = (_leafnames!(acc, m.left); _leafnames!(acc, m.right); acc)
 
 # ---------------------------------------------------------------------------

@@ -134,7 +134,7 @@ function _fieldline(io, prefix, islast, f, v, c, width)
     return println(io)
 end
 
-_fieldvalue(v, c::Fixed) = _fmt(c.value)
+_fieldvalue(_, c::Fixed) = _fmt(c.value)
 _fieldvalue(v, _) = _fmt(v)
 
 function _constraint(io, ::Free)
