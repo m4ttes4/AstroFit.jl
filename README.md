@@ -29,8 +29,16 @@ I started this because I missed the way [Astropy modeling](https://docs.astropy.
 
 ---
 
+## Installation
+
+```julia
+using Pkg
+Pkg.add(url="https://github.com/m4ttes4/AstroFit.jl")
+```
+
 ## Contents
 
+- [Installation](#installation)
 - [Motivation](#motivation)
 - [Quick Start](#quick-start)
 - [Building Models](#building-models)
@@ -44,7 +52,7 @@ I started this because I missed the way [Astropy modeling](https://docs.astropy.
 - [Extending AstroFit](#extending-astrofit)
 - [Internal Design](#internal-design)
 
----
+
 
 ## Motivation
 
@@ -67,7 +75,6 @@ across fitting libraries because it makes the structure of a model immediately
 obvious: `continuum + line_ha + line_nii` reads like what it is. You see the
 physics, not the plumbing.
 
----
 
 ## Quick Start
 
@@ -109,24 +116,31 @@ What happened:
 - `withparams(spec, sol.u)` rebuilt the fitted model — print it to see the tree
   with its final values.
 
----
+
 
 ## Building Models
 
-AstroFit models are immutable Julia structs. You evaluate them with `render`.
+AstroFit models are plain Julia structs. Each one represents a single
+component — a gaussian, a constant, a power law — and you evaluate it with
+`render`:
 
 ```julia
-g = Gaussian1D(amplitude=1.0, mean=0.0, sigma=2.0)
-render(g, 0.5)
-render(g, -1:0.5:1)
-
-c = Const1D(3.0)
-l = Linear1D(slope=2.0, intercept=1.0)
+g = Gaussian1D(amplitude=3.0, mean=5.0, sigma=1.2)
+render(g, 5.0)           # scalar: value at that point
+render(g, 0:0.1:10)      # vector: automatic broadcast
 ```
 
-### Composition operators
+Every built-in model has keyword arguments with defaults — you can omit the
+ones you don't need:
 
-Components combine with ordinary operators — no macro needed:
+```julia
+c = Const1D(value=2.0)
+l = Linear1D(slope=0.3)         # intercept = 0.0 by default
+```
+
+### Composing components
+
+Components combine with ordinary operators — no special syntax needed:
 
 | Expression | Meaning |
 |------------|---------|
@@ -138,121 +152,177 @@ Components combine with ordinary operators — no macro needed:
 | `a \|> b` | Pipe: `b(a(x))` |
 
 ```julia
-# Emission line on a flat continuum
-m = Const1D(0.5) + Gaussian1D(1.0, 0.0, 1.0)
-render(m, 0.0)   # 1.5
+# an emission line on a flat continuum
+m = Const1D(value=1.0) + Gaussian1D(amplitude=4.0, mean=5.0, sigma=0.5)
+render(m, 5.0)   # ≈ 5.0
 
-# Absorption line
-absorption = Const1D(1.0) - Gaussian1D(0.4, 0.0, 1.0)
-render(absorption, 0.0)   # 0.6
+# an absorption line on a linear continuum
+m = Linear1D(slope=0.1, intercept=2.0) - Gaussian1D(amplitude=0.5, mean=3.0, sigma=0.3)
 ```
 
-### Named models with `@model`
+This is enough to build and evaluate composite models. But if you want to
+**constrain** parameters (fix values, set bounds, tie one parameter to
+another) or **fit** the model to data, you need one more step.
 
-Use block form when you want named components:
+### `@model`: giving names to components
+
+Constraints and fitting reference components by name — "fix `ha.mean`",
+"tie `line_b.sigma` to `line_a.sigma`". Plain composition like
+`Gaussian1D(...) + Const1D(...)` is anonymous: there is no way to point at a
+specific component.
+
+`@model` solves this. Each assignment gives a name; the final expression
+defines the composition:
 
 ```julia
 spec = @model begin
-    cont  = Linear1D(0.0, 1.0)
-    ha    = Gaussian1D(5.0, 6563.0, 2.0)
-    n6548 = Gaussian1D(1.0, 6548.0, 2.0)
-    n6583 = Gaussian1D(3.0, 6583.0, 2.0)
-    cont + ha + n6548 + n6583
+    bg     = Linear1D(slope=0.01, intercept=1.0)
+    line_a = Gaussian1D(amplitude=6.0, mean=4861.0, sigma=1.5)
+    line_b = Gaussian1D(amplitude=2.0, mean=4959.0, sigma=1.5)
+    bg + line_a + line_b
 end
 ```
 
-The final expression is the composition. Every bound name must appear in it.
-Each named component becomes a `Leaf` node in an annotated model tree, ready to
-carry constraints. All parameters start free.
+What this does:
 
-### Navigating the tree
+- Each `name = Model(...)` creates a named component. The name is how you
+  refer to it in `@constrain`, `@fix`, `@tie`, and when inspecting results.
+- The last expression (`bg + line_a + line_b`) is the composition.
+  Every name must appear in it.
+- The result is a `CompiledModel` — the object that carries constraints
+  and exposes `params`, `bounds`, `withparams`, and the rest of the fitting
+  API.
+- All parameters start as free (unconstrained). Use `@constrain` to change
+  that.
 
-Each name is a property returning the leaf — resolved from the type, so it is
-exact and allocation-free:
+### Inspecting components
+
+After building a model with `@model`, you access any named component as a
+property:
 
 ```julia
-spec.ha                # the Leaf tagged :ha
-spec.ha.model          # Gaussian1D(5.0, 6563.0, 2.0)
-spec.ha.constraints    # (Free(), Free(), Free())
+spec.line_a              # the named component :line_a
+spec.line_a.model        # Gaussian1D(6.0, 4861.0, 1.5)
+spec.line_a.constraints  # constraint on each field: (Free(), Free(), Free())
 ```
 
----
+This is how you check values and constraint state at any point — before
+fitting, after fitting, or while debugging.
+
 
 ## Adding Constraints
 
-Each leaf field carries one of four constraint kinds:
+After `@model`, all parameters are free — the optimizer can move any of them.
+Constraints lock some down: fix a known wavelength, bound an amplitude to be
+positive, tie two line widths so they share the same velocity dispersion.
+Each constraint removes a degree of freedom from the fit.
 
-| Kind | Meaning | Free slot? |
-|------|---------|-----------|
-| `Free()` | a free parameter | yes |
+There are four kinds:
+
+| Kind | Meaning | Optimizer slot? |
+|------|---------|----------------|
+| `Free()` | unconstrained — the optimizer controls it | yes |
 | `Bounded(lo, hi)` | free, but confined to `[lo, hi]` | yes |
-| `Fixed(v)` | pinned to a constant | no |
-| `Tied(paths, f)` | `value = f(master₁, …)` of other free params | no |
+| `Fixed(v)` | pinned to a constant — never moves | no |
+| `Tied(masters, f)` | computed from other free parameters: `f(master₁, …)` | no |
 
-A `Tied` references one or more **free** masters by `(leaf, field)` path. Its
-masters must be `Free` or `Bounded` — no chaining.
-
-### Standalone constraint verbs
-
-`@fix`, `@bound`, `@free`, `@tie`, and `@prior` each edit one parameter and
-auto-rebind the model variable:
-
-```julia
-@fix   spec.ha.mean = 6563.0              # pin to a constant
-@bound spec.ha.amplitude in (0, Inf)      # confine to [0, ∞)
-@free  spec.cont.slope                    # release back to free
-@tie   spec.n6583.amplitude -> 2.96 * spec.n6548.amplitude   # fixed ratio
-```
+A `Tied` parameter references one or more free (or bounded) masters. Its
+value is always derived, never independent — so the optimizer never sees it.
+Ties cannot chain: every master must itself be `Free` or `Bounded`.
 
 ### `@constrain` block
 
-For more than one or two edits, `@constrain m begin … end` is the ergonomic
-form: leaf names are bare, each constraint has its own operator (no `@verb`
-prefix except `@free`), a parameter constrained twice is a compile-time error,
-and the whole model is validated at the end:
+The most common way to add constraints. Inside the block, leaf names are
+bare (no `spec.` prefix), and each constraint kind has its own operator:
+
+| Syntax | Constraint | Example |
+|--------|-----------|---------|
+| `field = value` | Fix to a constant | `line_a.mean = 4861.0` |
+| `field in (lo, hi)` | Bound to an interval | `line_a.amplitude in (0, Inf)` |
+| `field -> expr` | Tie to other parameters | `line_b.sigma -> line_a.sigma` |
+| `field ~ dist` | Bayesian prior | `line_a.sigma ~ LogNormal(0, 0.5)` |
+| `field` (bare) | Fix at current value | `line_a.mean` |
+| `@free field` | Release back to free | `@free line_a.mean` |
 
 ```julia
 @constrain spec begin
-    ha.mean    = 6563.0                    # fix
-    n6548.mean = 6548.0
-    n6583.mean = 6583.0
-    ha.amplitude    in (0, Inf)            # bound
-    n6548.amplitude in (0, Inf)
-    n6548.sigma     -> ha.sigma            # tie
-    n6583.sigma     -> ha.sigma
-    n6583.amplitude -> 2.96 * n6548.amplitude
+    line_a.mean       = 4861.0              # fix: known Hβ wavelength
+    line_b.mean       = 4959.0              # fix: known [OIII] wavelength
+    line_a.amplitude  in (0, Inf)           # bound: emission only
+    line_b.amplitude  in (0, Inf)
+    line_b.sigma      -> line_a.sigma       # tie: same velocity width
 end
 
 nfree(spec)        # 5
-paramnames(spec)   # [:cont_slope, :cont_intercept, :ha_amplitude, :ha_sigma, :n6548_amplitude]
+paramnames(spec)   # [:bg_slope, :bg_intercept, :line_a_amplitude, :line_a_sigma, :line_b_amplitude]
 ```
 
-### Low-level engine
+After adding constraints (see next section), the display updates to reflect
+them — fixed values turn red, bounds show their interval, tied parameters
+show their master:
 
-The verbs lower to `setconstraint`, useful when building constraints
-programmatically:
+```
+julia> spec   # after @constrain
+CompiledModel  ·  3 free  ·  2 bounds  ·  2 fixed  ·  1 tied
+formula: bg + line_a + line_b
++
+├─ bg :: Linear1D
+│  ├─ slope      0.01    free
+│  └─ intercept  1.0     free
+├─ line_a :: Gaussian1D
+│  ├─ amplitude  6.0     bounds [0.0, Inf]
+│  ├─ mean       4861.0  fixed
+│  └─ sigma      1.5     free
+└─ line_b :: Gaussian1D
+   ├─ amplitude  2.0     bounds [0.0, Inf]
+   ├─ mean       4959.0  fixed
+   └─ sigma      1.5     tied -> line_a.sigma
+```
+
+Constraining the same parameter twice in one block is a compile-time error —
+no silent overwrites.
+
+### Standalone constraint macros
+
+For quick one-off edits outside a block, each macro targets one parameter
+and automatically rebinds the model variable:
 
 ```julia
-s = setconstraint(spec, :ha, :sigma, Bounded(0.5, 10.0))
-s = setconstraint(s, :n6548, :sigma, Tied(((:ha, :sigma),), identity))
+@fix   spec.line_a.mean = 4861.0                          # pin to a value
+@bound spec.line_a.amplitude in (0, Inf)                   # set bounds
+@tie   spec.line_b.sigma -> spec.line_a.sigma              # tie to another parameter
+@free  spec.line_a.mean                                    # release back to free
+```
+
+Note: standalone macros use the full path (`spec.line_a.field`), while
+`@constrain` uses bare names (`line_a.field`).
+
+### Programmatic constraints with `setconstraint`
+
+The macros lower to `setconstraint`, which you can call directly when
+building constraints in a loop or from data:
+
+```julia
+s = setconstraint(spec, :line_a, :sigma, Bounded(0.5, 10.0))
+s = setconstraint(s, :line_b, :sigma, Tied(((:line_a, :sigma),), identity))
 validate(s)   # checks all ties point at free masters; throws otherwise
 ```
 
----
+
 
 ## Working With Parameters
 
 ### Free parameters
 
 ```julia
-nfree(spec)        # number of free parameters
+nfree(spec)        # number of free (+ bounded) parameters
 params(spec)       # current free values (p₀ for the optimizer)
-paramnames(spec)   # slot labels: [:cont_slope, :cont_intercept, …]
+paramnames(spec)   # slot labels: [:bg_slope, :bg_intercept, :line_a_amplitude, …]
 bounds(spec)       # (lower, upper) vectors aligned with params
 ```
 
-All four accessors walk the tree in the same DFS order `withparams` assigns
-slots, so they line up slot-for-slot.
+All four accessors walk the tree in the same left-to-right order
+`withparams` uses to assign slots, so they always line up.
 
 ### Rebuilding with `withparams`
 
@@ -264,9 +334,9 @@ model = withparams(spec, params(spec))
 re-resolves all tied parameters, and returns the **bare** model tree (Leaf
 wrappers stripped). This is the function you call inside the fitting loop.
 
-For example, if `n6583.amplitude -> 2.96 * n6548.amplitude`, the optimizer never
-sees a separate `n6583_amplitude` slot. `withparams` rebuilds a plain model where
-that field has already been computed from `n6548_amplitude`, so `render` does not
+For example, if `line_b.sigma -> line_a.sigma`, the optimizer never sees a
+separate `line_b_sigma` slot. `withparams` rebuilds a plain model where that
+field has already been computed from `line_a_sigma`, so `render` does not
 need to know about constraints.
 
 ---
@@ -328,7 +398,6 @@ to any Julia optimizer:
 # best = withparams(fit, Optim.minimizer(res))
 ```
 
----
 
 ## Optimization.jl Integration
 
@@ -380,9 +449,10 @@ optf = OptimizationFunction(spec, λ, y; adtype = AutoForwardDiff())
 prob = OptimizationProblem(optf, params(spec); lb, ub)
 ```
 
----
 
 ## Future Progress
+
+### Bayesian sampling
 
 Bayesian analysis is a natural next step for AstroFit, and it should not require
 a different model layer. The core pieces are already present: parameters are a
@@ -397,10 +467,12 @@ using Distributions
 end
 ```
 
-What is still missing is integration glue for samplers. In practice that means
-writing small extensions that expose AstroFit models to Pigeons.jl and similar
-Bayesian libraries, mapping their parameter vectors into `logposterior(cm, p, x,
-y, err)` and carrying `paramnames(cm)` through to the sampled output.
+What is still missing is integration glue for samplers. The plan is to
+implement the [LogDensityProblems.jl](https://github.com/tpapp/LogDensityProblems.jl)
+interface as a package extension — it is the standard Julia abstraction for
+log-density targets, and most MCMC samplers already accept it (AdvancedHMC.jl,
+DynamicHMC.jl, Pigeons.jl). Once that extension exists, any sampler
+that speaks LogDensityProblems should works with AstroFit models out of the box.
 
 ### A `@component` macro for defining models
 
@@ -445,7 +517,7 @@ render(m::Gaussian1D, x::Number) =
     m.amplitude * exp(-((x - m.mean) / m.sigma)^2 / 2)
 ```
 
----
+
 
 ## Benchmarks
 
@@ -505,7 +577,7 @@ still type-stable.
 See [`bench/README.md`](bench/README.md) for the benchmark script, command, and
 current numbers.
 
----
+
 
 ## Real Examples
 
@@ -546,10 +618,36 @@ disk. Sersic indices are fixed. 18 free parameters total, fitted with
 
 ```julia
 cm = @model begin
-    bulge1 = Gaussian2D(amplitude = 20.0, x0 = -3.5, y0 = 0.5, sigma = 2.5, q = 1.0, theta = 0.0)
-    disk1  = Sersic2D(amplitude = 8.0, x0 = -3.5, y0 = 0.5, r_eff = 5.0, n = 1.0, q = 0.9, theta = 0.0)
-    bulge2 = Gaussian2D(amplitude = 15.0, x0 = 4.5, y0 = 0.0, sigma = 1.5, q = 1.0, theta = 0.0)
-    disk2  = Sersic2D(amplitude = 5.0, x0 = 4.5, y0 = 0.0, r_eff = 4.5, n = 1.0, q = 0.9, theta = 0.0)
+    bulge1 = Gaussian2D(amplitude = 20.0, 
+                        x0 = -3.5, 
+                        y0 = 0.5, 
+                        sigma = 2.5, 
+                        q = 1.0, 
+                        theta = 0.0)
+
+    disk1  = Sersic2D(amplitude = 8.0, 
+                    x0 = -3.5, 
+                    y0 = 0.5, 
+                    r_eff = 5.0, 
+                    n = 1.0, 
+                    q = 0.9, 
+                    theta = 0.0)
+
+    bulge2 = Gaussian2D(amplitude = 15.0, 
+                        x0 = 4.5, 
+                        y0 = 0.0, 
+                        sigma = 1.5, 
+                        q = 1.0, 
+                        theta = 0.0)
+
+    disk2  = Sersic2D(amplitude = 5.0, 
+                    x0 = 4.5, 
+                    y0 = 0.0, 
+                    r_eff = 4.5, 
+                    n = 1.0, 
+                    q = 0.9, 
+                    theta = 0.0)
+                    
     bulge1 + disk1 + bulge2 + disk2
 end
 
