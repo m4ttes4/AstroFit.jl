@@ -21,7 +21,7 @@ export Gaussian2D, Sersic2D, Moffat2D, Beta2D
 export AbstractConstraint, Free, Fixed, Bounded, Tied
 export CompiledModel, withparams, params, nfree, bounds, paramnames
 export setconstraint, validate
-export logprior, setprior, ObjectiveFunction, chi2
+export logprior, setprior, ObjectiveFunction, chi2, loglikelihood, logposterior
 export @model, @fix, @bound, @free, @tie, @prior, @constrain
 export render, render!
 export emission_line, absorption_line, doublet, powerlaw_continuum, blackbody_continuum
