@@ -6,24 +6,34 @@ using Optimization: AutoForwardDiff
 using ForwardDiff
 
 function OptimizationFunction(
-        cm::AstroFit.CompiledModel, x, y, err = nothing;
-        adtype = AutoForwardDiff()
+        cm::AstroFit.CompiledModel, x, y, err = nothing ; adtype = AutoForwardDiff(), kwargs...
     )
-    f = objective(cm, x, y; err)
-    return OptimizationFunction((u, _p) -> f(u), adtype)
+    f = AstroFit.ObjectiveFunction(cm, x, y, err)
+    return OptimizationFunction(f, adtype; kwargs...)
+end
+
+function OptimizationFunction(
+        f::AstroFit.ObjectiveFunction; adtype = AutoForwardDiff(), kwargs...
+    )
+    return OptimizationFunction(f, adtype; kwargs...)
 end
 
 function OptimizationProblem(
         cm::AstroFit.CompiledModel, x, y, err = nothing;
         adtype = AutoForwardDiff(), kwargs...
     )
-    optf = OptimizationFunction(cm, x, y, err; adtype)
+    
+
+    optf = AstroFit.ObjectiveFunction(cm, x, y, err)  #OptimizationFunction(cm, x, y, err; adtype)
     u0 = params(cm)
-    lb, ub = bounds(cm)
+    lb, ub = optf.lower, optf.upper
+
+    f = OptimizationFunction(optf; adtype)
+
     return if all(isinf, lb) && all(isinf, ub)
-        OptimizationProblem(optf, u0; kwargs...)
+        OptimizationProblem(f, u0; kwargs...)
     else
-        OptimizationProblem(optf, u0; lb, ub, kwargs...)
+        OptimizationProblem(f, u0; lb, ub, kwargs...)
     end
 end
 
