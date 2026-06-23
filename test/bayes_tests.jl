@@ -77,7 +77,7 @@ end
     )(tied)
 end
 
-@testitem "loglikelihood: Gaussian independent errors" tags = [:bayes] begin
+@testitem "chi2: weighted residuals" tags = [:bayes] begin
     using AstroFit
 
     cm = @model begin
@@ -88,57 +88,13 @@ end
     x = [1.0, 2.0, 3.0]
     y = [2.0, 3.0, 0.0]
     err = [1.0, 2.0, 4.0]
-    residual = (render(cm, x) .- y) ./ err
-    expected = -0.5 * sum(abs2, residual) - sum(log, err) - length(y) / 2 * log(2π)
+    expected = sum(abs2, (render(cm, x) .- y) ./ err)
 
-    @test AstroFit.loglikelihood(cm, x, y, err) == expected
-    @test AstroFit.loglikelihood(cm, params(cm), x, y, err) == expected
-    @test_throws ArgumentError AstroFit.loglikelihood(cm, x, y, [1.0, 0.0, 1.0])
-    @test_throws ArgumentError AstroFit.loglikelihood(cm, x, y[1:2], err)
+    @test chi2(cm.tree, (x,), y, err) == expected
+    @test chi2(cm.tree, (x,), y, nothing) == sum(abs2, render(cm, x) .- y)
 end
 
-@testitem "loglikelihood: noise-free fit uses unit variance" tags = [:bayes] begin
-    using AstroFit
-
-    cm = @model begin
-        c = Const1D(value = 2.0)
-        c
-    end
-
-    x = [1.0, 2.0, 3.0]
-    y = [2.0, 3.0, 0.0]
-    r = render(cm, x) .- y
-    expected = -0.5 * sum(abs2, r) - length(y) / 2 * log(2π)
-
-    @test AstroFit.loglikelihood(cm, x, y, nothing) == expected
-    @test AstroFit.loglikelihood(cm, params(cm), x, y, nothing) == expected
-    @test AstroFit.loglikelihood(cm, x, y, nothing) ==
-        AstroFit.loglikelihood(cm, x, y, ones(length(y)))
-    @test_throws ArgumentError AstroFit.loglikelihood(cm, x, y[1:2], nothing)
-    @test logposterior(cm, x, y, nothing) == AstroFit.loglikelihood(cm, x, y, nothing)
-end
-
-@testitem "loglikelihood: allocation-free hot path" tags = [:bayes] begin
-    using AstroFit
-
-    cm = @model begin
-        g = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.0)
-        g
-    end
-    mk(n) = (x = collect(range(-3, 3; length = n)); (x, render(cm, x), fill(0.1, n)))
-
-    x1, y1, e1 = mk(50)
-    x2, y2, e2 = mk(5000)
-    AstroFit.loglikelihood(cm, x1, y1, e1)
-    AstroFit.loglikelihood(cm, x2, y2, e2)
-
-    a1 = @allocated AstroFit.loglikelihood(cm, x1, y1, e1)
-    a2 = @allocated AstroFit.loglikelihood(cm, x2, y2, e2)
-    @test a1 == a2
-    @test a2 < 512
-end
-
-@testitem "objective: solver-agnostic minimisation target" tags = [:bayes] begin
+@testitem "ObjectiveFunction: 1D evaluation and Optimization.jl convention" tags = [:bayes] begin
     using AstroFit
 
     cm = @model begin
@@ -149,14 +105,65 @@ end
     y = render(cm, x)
     u = params(cm)
 
-    f0 = objective(cm, x, y)
-    @test f0(u) == -logposterior(cm, u, x, y, nothing)
-
-    err = fill(0.5, length(y))
-    fe = objective(cm, x, y; err = err)
-    @test fe(u) == -logposterior(cm, u, x, y, err)
+    f = ObjectiveFunction(cm, x, y)
+    @test f(u) == 0.0
+    @test f(u, nothing) == f(u)
 
     u2 = u .+ 0.3
-    @test f0(u2) == -logposterior(cm, u2, x, y, nothing)
-    @test f0(u) <= f0(u2)
+    @test f(u2) > 0.0
+    @test f(u) <= f(u2)
+end
+
+@testitem "ObjectiveFunction: 2D evaluation" tags = [:bayes] begin
+    using AstroFit
+
+    cm = @model begin
+        g = Gaussian2D(amplitude = 2.0, x0 = 0.0, y0 = 0.0, sigma = 1.0, q = 1.0, theta = 0.0)
+        g
+    end
+    xs = repeat(collect(-2.0:0.5:2.0), outer = 9)
+    ys = repeat(collect(-2.0:0.5:2.0), inner = 9)
+    y = render(cm, xs, ys)
+    u = params(cm)
+
+    f = ObjectiveFunction(cm, (xs, ys), y)
+    @test f(u) ≈ 0.0 atol = 1e-20
+    @test f(u .+ 0.1) > 0.0
+end
+
+@testitem "ObjectiveFunction: data validation" tags = [:bayes] begin
+    using AstroFit
+
+    cm = @model begin
+        c = Const1D(value = 1.0)
+        c
+    end
+    x = [1.0, 2.0, 3.0]
+    y = [1.0, 1.0, 1.0]
+
+    @test_throws ArgumentError ObjectiveFunction(cm, x, y[1:2])
+    @test_throws ArgumentError ObjectiveFunction(cm, x, y, [1.0, 0.0, 1.0])
+    @test_throws ArgumentError ObjectiveFunction(cm, x, y, [1.0, -1.0, 1.0])
+end
+
+@testitem "ObjectiveFunction: allocation-free hot path" tags = [:bayes] begin
+    using AstroFit
+
+    cm = @model begin
+        g = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.0)
+        g
+    end
+    mk(n) = (x = collect(range(-3, 3; length = n)); (x, render(cm, x), fill(0.1, n)))
+
+    x1, y1, e1 = mk(50)
+    x2, y2, e2 = mk(5000)
+    f1 = ObjectiveFunction(cm, x1, y1, e1)
+    f2 = ObjectiveFunction(cm, x2, y2, e2)
+    u = params(cm)
+    f1(u); f2(u)
+
+    a1 = @allocated f1(u)
+    a2 = @allocated f2(u)
+    @test a1 == a2
+    @test a2 < 512
 end
