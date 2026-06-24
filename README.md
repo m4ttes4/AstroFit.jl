@@ -107,14 +107,14 @@ sol  = solve(prob, Optim.Fminbox(Optim.LBFGS()))
 best = withparams(spec, sol.u)   # fitted model: recovers amplitude≈5, mean≈6563, sigma≈2
 ```
 
-What happened:
-
-- `@model` built a named, composable model tree (`cont + ha`).
-- `@constrain` attached bounds in place, rebinding `spec`.
-- `OptimizationProblem(spec, λ, observed)` read `params(spec)` as the starting point
-  and `bounds(spec)` as the box, automatically.
-- `withparams(spec, sol.u)` rebuilt the fitted model. Print it to see the tree
-  with its final values.
+> [!TIP]
+> **What happened:**
+> - `@model` built a named, composable model tree (`cont + ha`).
+> - `@constrain` attached bounds in place, rebinding `spec`.
+> - `OptimizationProblem(spec, λ, observed)` read `params(spec)` as the starting point
+>   and `bounds(spec)` as the box, automatically.
+> - `withparams(spec, sol.u)` rebuilt the fitted model. Print it to see the tree
+>   with its final values.
 
 
 
