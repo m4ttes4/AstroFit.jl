@@ -1,250 +1,188 @@
-# Benchmarks for AstroFit's `withparams` rendering overhead.
+# AstroFit render overhead benchmark.
 #
-# Thesis: the fastest way to evaluate a constrained model is a handwritten
-# function where bounds, fixed values, and ties are hardcoded. AstroFit aims to
-# get close to that baseline while preserving reusable, composable models.
+# Measures how close AstroFit's composable models get to a handwritten function
+# where constraints are hardcoded. Two cases:
 #
-# The headline measurement is therefore:
+#   1. Fixed:  Hα + [NII] triplet (5 free params, 6 ties)
+#   2. Scaling: N Gaussians with all amplitudes tied (2N+1 free params)
 #
-#   render(withparams(constrained_cm, p), x)  vs  handwritten_constrained(p, x)
-#
-# `withparams` is timed separately because it is where AstroFit scatters the
-# flat parameter vector into the model and resolves ties. Those operations are
-# generated as straight-line code from the constraint spec.
-#
-# Run:
-#   cd /home/matteo/julia/AstroFit.jl
-#   julia --project=/home/matteo/.julia/environments/v1.12 bench/benchmarks.jl
-#
-# Uses the Julia environment in /home/matteo/.julia/environments/v1.12.
-# It needs AstroFit, BenchmarkTools and Plots. By default, figures are written
-# under bench/results/<timestamp>; pass an output directory as the first
-# argument, or set ASTROFIT_BENCH_OUTDIR, to choose a stable path.
+# Run:  julia --project=bench bench/benchmarks.jl
 
 using AstroFit
 using BenchmarkTools
-using Dates
+using CairoMakie
 using Printf
 
-include(joinpath(@__DIR__, "kernels.jl"))
-
-# Keep the script useful for quick local runs while still collecting medians.
 BenchmarkTools.DEFAULT_PARAMETERS.seconds = 0.75
 
-const OUTDIR = get(
-    ENV, "ASTROFIT_BENCH_OUTDIR",
-    get(
-        ARGS, 1,
-        joinpath(
-            @__DIR__, "results",
-            Dates.format(now(), "yyyymmdd_HHMMSS")
-        )
-    )
-)
-mkpath(OUTDIR)
+# ============================================================================
+# 1. Hα + [NII] — fixed realistic case
+# ============================================================================
 
-stat(b) = (time = median(b).time, allocs = b.allocs, memory = b.memory)
-ratio(a, b) = a / b
-ns_to_us(x) = x / 1.0e3
+const λ_Ha    = 6562.8
+const λ_NII_r = 6583.4
+const λ_NII_b = 6548.1
 
-function row(label, s)
-    return @printf(
-        "    %-34s %10.1f ns   %6d allocs   %8d bytes\n",
-        label, s.time, s.allocs, s.memory
-    )
+cm = @model begin
+    cont  = Linear1D(slope = 0.0, intercept = 1.0)
+    ha    = Gaussian1D(amplitude = 10.0, mean = λ_Ha, sigma = 3.0)
+    nii_r = Gaussian1D(amplitude = 3.0, mean = λ_NII_r, sigma = 3.0)
+    nii_b = Gaussian1D(amplitude = 1.0, mean = λ_NII_b, sigma = 3.0)
+    cont + ha + nii_r + nii_b
 end
 
-function ratio_row(label, num, den)
-    return @printf("    %-34s %10.3f x\n", label, ratio(num.time, den.time))
+@constrain cm begin
+    cont.intercept in (0.0, Inf)
+    ha.amplitude   in (0.0, Inf)
+    ha.mean        in (λ_Ha - 30, λ_Ha + 30)
+    ha.sigma       in (0.5, 20.0)
+    nii_r.amplitude -> (3.06 / 3.0) * ha.amplitude
+    nii_r.mean      -> (λ_NII_r / λ_Ha) * ha.mean
+    nii_r.sigma     -> ha.sigma
+    nii_b.amplitude -> ha.amplitude / 3.0
+    nii_b.mean      -> (λ_NII_b / λ_Ha) * ha.mean
+    nii_b.sigma     -> ha.sigma
 end
 
-function check_equivalent(label, astro_y, hand_y)
-    @assert astro_y ≈ hand_y "$label: handwritten constrained kernel diverges from AstroFit"
-    return maximum(abs.(astro_y .- hand_y))
+# Handwritten equivalent: same ties baked in, same parameter order.
+# p = [slope, intercept, ha.A, ha.μ, ha.σ]
+function hand_render(p, x)
+    s, ic, A, μ, σ = p
+    rA = (3.06 / 3.0) * A
+    bA = A / 3.0
+    rμ = (λ_NII_r / λ_Ha) * μ
+    bμ = (λ_NII_b / λ_Ha) * μ
+    return @. s * x + ic +
+        A  * exp(-((x - μ)  / σ)^2 / 2) +
+        rA * exp(-((x - rμ) / σ)^2 / 2) +
+        bA * exp(-((x - bμ) / σ)^2 / 2)
 end
 
-function benchmark_fixed(label, free_cm, con_cm, hand_con, x)
-    pf = AstroFit.params(free_cm)
+x_fixed = collect(6500.0:1.0:6650.0)
+p_fixed = AstroFit.params(cm)
+
+# sanity check
+@assert render(withparams(cm, p_fixed), x_fixed) ≈ hand_render(p_fixed, x_fixed)
+
+println("== Hα + [NII]:  $(nfree(cm)) free params, $(length(x_fixed)) points ==\n")
+
+b_wp   = @benchmark withparams($cm, $p_fixed)
+b_af   = @benchmark render(withparams($cm, $p_fixed), $x_fixed)
+b_hand = @benchmark hand_render($p_fixed, $x_fixed)
+
+t_wp   = median(b_wp).time
+t_af   = median(b_af).time
+t_hand = median(b_hand).time
+
+@printf("  %-30s %10.1f ns  %d allocs\n", "withparams alone",          t_wp,   b_wp.allocs)
+@printf("  %-30s %10.1f ns  %d allocs\n", "AstroFit render(withparams)", t_af,  b_af.allocs)
+@printf("  %-30s %10.1f ns  %d allocs\n", "handwritten render",        t_hand, b_hand.allocs)
+@printf("  %-30s %10.2f x\n",             "ratio AstroFit/handwritten", t_af / t_hand)
+
+# ============================================================================
+# 2. Scaling sweep: N Gaussians, all amplitudes tied to g1
+# ============================================================================
+
+function make_models(N)
+    decls = [:($(Symbol("g", i)) = Gaussian1D(amplitude=1.0, mean=$(Float64(i)), sigma=1.0)) for i in 1:N]
+    sumexpr = foldl((a, b) -> :($a + $b), (Symbol("g", i) for i in 1:N))
+    ties = [:($(Symbol("g", i)).amplitude -> g1.amplitude * 0.5) for i in 2:N]
+    consblock = Expr(:block, :(g1.amplitude in (0.0, Inf)), ties...)
+    Core.eval(@__MODULE__, quote
+        let
+            _cm = @model $(Expr(:block, decls..., sumexpr))
+            @constrain _cm $consblock
+            _cm
+        end
+    end)
+end
+
+# Handwritten N-bump: p = [A, μ₁, σ₁, μ₂, σ₂, …]
+function hand_nbump(p, x, N)
+    A = p[1]
+    y = zero.(x)
+    for i in 1:N
+        μ, σ = p[2i], p[2i + 1]
+        Ai = i == 1 ? A : 0.5 * A
+        y .+= @. Ai * exp(-((x - μ) / σ)^2 / 2)
+    end
+    return y
+end
+
+Ns = [2, 4, 8, 16, 32, 64]
+
+sweep_af   = Float64[]
+sweep_hand = Float64[]
+sweep_wp   = Float64[]
+
+println("\n== Scaling: N Gaussians, all amplitudes tied ==")
+@printf("  %4s  %5s  %12s  %12s  %12s  %8s\n",
+    "N", "free", "withparams", "AstroFit", "handwritten", "ratio")
+
+function bench_one(con_cm, x, N)
     pc = AstroFit.params(con_cm)
+    @assert render(withparams(con_cm, pc), x) ≈ hand_nbump(pc, x, N)
 
-    astro_y = render(withparams(con_cm, pc), x)
-    hand_y = hand_con(pc, x)
-    maxerr = check_equivalent(label, astro_y, hand_y)
+    bw = @benchmark withparams($con_cm, $pc)
+    ba = @benchmark render(withparams($con_cm, $pc), $x)
+    bh = @benchmark hand_nbump($pc, $x, $N)
 
-    @printf("\n== %s ==\n", label)
-    @printf(
-        "    data points: %d | free params: %d | constrained params: %d | max |Δ|: %.3e\n",
-        length(x), nfree(free_cm), nfree(con_cm), maxerr
-    )
+    tw, ta, th = median(bw).time, median(ba).time, median(bh).time
+    push!(sweep_wp, tw)
+    push!(sweep_af, ta)
+    push!(sweep_hand, th)
 
-    b_wp_con = @benchmark withparams($con_cm, $pc)
-    b_af_con = @benchmark render(withparams($con_cm, $pc), $x)
-    b_hand_con = @benchmark $hand_con($pc, $x)
-
-    s_wp_con = stat(b_wp_con)
-    s_af_con = stat(b_af_con)
-    s_hand_con = stat(b_hand_con)
-
-    println("  primary constrained comparison:")
-    row("AstroFit withparams only", s_wp_con)
-    row("AstroFit render(withparams)", s_af_con)
-    row("handwritten constrained render", s_hand_con)
-    ratio_row("AstroFit / handwritten render", s_af_con, s_hand_con)
-    @printf(
-        "    %-34s %10.3f %%\n",
-        "withparams share of AstroFit render",
-        100 * ratio(s_wp_con.time, s_af_con.time)
-    )
-
-    b_wp_free = @benchmark withparams($free_cm, $pf)
-    b_af_free = @benchmark render(withparams($free_cm, $pf), $x)
-    s_wp_free = stat(b_wp_free)
-    s_af_free = stat(b_af_free)
-
-    println("  secondary AstroFit free vs constrained:")
-    row("AstroFit free withparams", s_wp_free)
-    row("AstroFit free render(withparams)", s_af_free)
-    ratio_row("constrained/free withparams", s_wp_con, s_wp_free)
-    ratio_row("constrained/free render", s_af_con, s_af_free)
-
-    return (
-        label = label,
-        nfree_free = nfree(free_cm),
-        nfree_con = nfree(con_cm),
-        withparams = s_wp_con,
-        af_render = s_af_con,
-        hand_render = s_hand_con,
-        free_withparams = s_wp_free,
-        free_render = s_af_free,
-    )
+    @printf("  %4d  %5d  %10.1f ns  %10.1f ns  %10.1f ns  %6.2f x\n",
+        N, nfree(con_cm), tw, ta, th, ta / th)
 end
 
-function make_sweep_cases(Ns)
-    return map(Ns) do N
-        free_cm, con_cm = nbump_models(N)
-        x = collect(range(0.0, N + 1.0; length = 200))
-        pc = AstroFit.params(con_cm)
-        (N = N, free_cm = free_cm, con_cm = con_cm, x = x, pc = pc)
-    end
+for N in Ns
+    con_cm = make_models(N)
+    x = collect(range(0.0, N + 1.0; length = 400))
+    Base.invokelatest(bench_one, con_cm, x, N)
 end
 
-function benchmark_sweep(cases)
-    rows = NamedTuple[]
-    println("\n== Scaling: constrained AstroFit vs handwritten constrained ==")
-    println("    N    params   withparams ns   AstroFit us   handwritten us   ratio")
+# ============================================================================
+# 3. Plot
+# ============================================================================
 
-    for case in cases
-        N = case.N
-        con_cm = case.con_cm
-        x = case.x
-        pc = case.pc
+fig = Figure(size = (900, 450), fontsize = 14)
 
-        astro_y = render(withparams(con_cm, pc), x)
-        hand_y = hand_nbump_con(pc, x, N)
-        check_equivalent("N=$N sweep", astro_y, hand_y)
+# left: render times (log-log)
+ax1 = Axis(fig[1, 1];
+    title = "Constrained render time",
+    xlabel = "N components", ylabel = "Time (µs)",
+    xscale = log2, yscale = log10,
+    xticks = Ns,
+    xtickformat = xs -> string.(Int.(xs)),
+)
+scatterlines!(ax1, Ns, sweep_af ./ 1e3;
+    label = "AstroFit", color = :dodgerblue, linewidth = 2, markersize = 10)
+scatterlines!(ax1, Ns, sweep_hand ./ 1e3;
+    label = "Handwritten", color = :tomato, linewidth = 2, markersize = 10)
+axislegend(ax1; position = :lt)
 
-        b_wp = @benchmark withparams($con_cm, $pc)
-        b_af = @benchmark render(withparams($con_cm, $pc), $x)
-        b_hand = @benchmark hand_nbump_con($pc, $x, $N)
+# right: ratio as bars
+ax2 = Axis(fig[1, 2];
+    title = "AstroFit / Handwritten",
+    xlabel = "N components", ylabel = "Ratio",
+    xticks = (eachindex(Ns), string.(Ns)),
+    yticks = [0.9, 0.95, 1.0, 1.05],
+    yminorticksvisible = false,
+)
+ratios = sweep_af ./ sweep_hand
+barplot!(ax2, eachindex(Ns), ratios;
+    color = [r <= 1.0 ? :dodgerblue : :tomato for r in ratios],
+    strokewidth = 0.5, strokecolor = :grey50)
+hlines!(ax2, [1.0]; color = :black, linestyle = :dash, linewidth = 1.5)
+ylims!(ax2, 0.88, 1.08)
 
-        s_wp = stat(b_wp)
-        s_af = stat(b_af)
-        s_hand = stat(b_hand)
-        r = ratio(s_af.time, s_hand.time)
-
-        @printf(
-            "    %2d      %3d      %10.1f    %10.3f      %10.3f   %6.3f x\n",
-            N, nfree(con_cm), s_wp.time, ns_to_us(s_af.time),
-            ns_to_us(s_hand.time), r
-        )
-
-        push!(
-            rows, (
-                N = N,
-                nfree = nfree(con_cm),
-                withparams = s_wp,
-                af_render = s_af,
-                hand_render = s_hand,
-                render_ratio = r,
-            )
-        )
-    end
-
-    return rows
+# withparams cost as annotation on the left panel
+let wp_label = join([@sprintf("N=%d: %dns", Ns[i], round(Int, sweep_wp[i])) for i in eachindex(Ns)], "  ")
+    ha_label = @sprintf("Hα+[NII] fixed case: %.2fx (5 free, 151 pts)", t_af / t_hand)
+    Label(fig[2, :], ha_label * "    ·    withparams overhead: " * wp_label;
+        fontsize = 11, color = :grey50, halign = :center)
 end
 
-println("AstroFit withparams overhead benchmarks")
-println("=======================================")
-println("output directory: ", OUTDIR)
-
-free_s, con_s = small_models()
-small = benchmark_fixed(
-    "Small constrained line (Linear1D + Gaussian1D)",
-    free_s, con_s, hand_small_con, collect(-10.0:0.1:10.0)
-)
-
-free_c, con_c = complex_models()
-complex = benchmark_fixed(
-    "Hα + [NII] constrained complex",
-    free_c, con_c, hand_complex_con, collect(6500.0:1.0:6650.0)
-)
-
-sweep_cases = make_sweep_cases([1, 2, 4, 8, 16])
-sweep = benchmark_sweep(sweep_cases)
-
-println("\nplotting...")
-using Plots
-
-fixed_labels = ["small", "Hα+[NII]"]
-fixed_ratios = [
-    ratio(small.af_render.time, small.hand_render.time),
-    ratio(complex.af_render.time, complex.hand_render.time),
-]
-fixed_withparams = ns_to_us.([small.withparams.time, complex.withparams.time])
-
-p_fixed = plot(
-    layout = (1, 2), size = (920, 360), legend = false,
-    bottom_margin = 6Plots.mm, left_margin = 6Plots.mm
-)
-bar!(
-    p_fixed[1], fixed_labels, fixed_ratios;
-    title = "AstroFit / handwritten", ylabel = "render ratio"
-)
-hline!(p_fixed[1], [1.0]; color = :black, linestyle = :dash)
-bar!(
-    p_fixed[2], fixed_labels, fixed_withparams;
-    title = "withparams only", ylabel = "time [µs]"
-)
-fixed_path = joinpath(OUTDIR, "fixed_complex.png")
-savefig(p_fixed, fixed_path)
-
-Ns = [r.N for r in sweep]
-sweep_ratios = [r.render_ratio for r in sweep]
-sweep_withparams = ns_to_us.([r.withparams.time for r in sweep])
-sweep_af = ns_to_us.([r.af_render.time for r in sweep])
-sweep_hand = ns_to_us.([r.hand_render.time for r in sweep])
-
-p_sweep = plot(
-    layout = (1, 3), size = (1200, 380), legend = :topleft,
-    bottom_margin = 6Plots.mm, left_margin = 6Plots.mm
-)
-plot!(
-    p_sweep[1], Ns, sweep_ratios; marker = :o, label = "ratio",
-    title = "AstroFit / handwritten", xlabel = "N Gaussians",
-    ylabel = "render ratio"
-)
-hline!(p_sweep[1], [1.0]; color = :black, linestyle = :dash, label = "1x")
-plot!(
-    p_sweep[2], Ns, sweep_withparams; marker = :o, label = "withparams",
-    title = "withparams only", xlabel = "N Gaussians", ylabel = "time [µs]"
-)
-plot!(
-    p_sweep[3], Ns, [sweep_af sweep_hand]; marker = :o,
-    label = ["AstroFit" "handwritten"], title = "constrained render",
-    xlabel = "N Gaussians", ylabel = "time [µs]"
-)
-sweep_path = joinpath(OUTDIR, "scaling.png")
-savefig(p_sweep, sweep_path)
-
-println("saved -> ", fixed_path)
-println("saved -> ", sweep_path)
+save("bench/scaling.png", fig; px_per_unit = 2)
+println("\nsaved -> bench/scaling.png")

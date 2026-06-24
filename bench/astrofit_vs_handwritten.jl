@@ -61,7 +61,7 @@ function hand_render(p, xi)
     bA = A / 3.0
     rμ = (λ_NII_r / λ_Ha) * μ
     bμ = (λ_NII_b / λ_Ha) * μ
-    @fastmath s * xi + ic +
+    s * xi + ic +
         A  * exp(-((xi - μ)  / σ)^2 / 2) +
         rA * exp(-((xi - rμ) / σ)^2 / 2) +
         bA * exp(-((xi - bμ) / σ)^2 / 2)
@@ -69,7 +69,7 @@ end
 
 function hand_chi2(p, x, y, err)
     acc = zero(eltype(p))
-    @inbounds @fastmath for i in eachindex(y)
+    @inbounds for i in eachindex(y)
         r = hand_render(p, x[i]) - y[i]
         acc += abs2(r / err[i])
     end
