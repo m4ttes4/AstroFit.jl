@@ -279,8 +279,9 @@ formula: bg + line_a + line_b
    └─ sigma      1.5     tied -> line_a.sigma
 ```
 
-Constraining the same parameter twice in one block is a compile-time error,
-no silent overwrites.
+> [!NOTE]
+> Constraining the same parameter twice in one block is a compile-time error,
+> no silent overwrites.
 
 ### Standalone constraint macros
 
