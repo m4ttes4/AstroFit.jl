@@ -1,0 +1,22 @@
+case,nfree,metric,astrofit_ns,handwritten_ns,ratio,iters_a,iters_h
+Small (Linear1D + Gaussian1D, slope fixed),4,objective,523.5,533.6,0.9811,4,4
+Small (Linear1D + Gaussian1D, slope fixed),4,gradient,2066.7,1154.2,1.7906,4,4
+Small (Linear1D + Gaussian1D, slope fixed),4,solve,136667.0,96458.0,1.4169,4,4
+Hα + [NII] (bounds + 6 ties),5,objective,2008.3,1112.5,1.8052,7,7
+Hα + [NII] (bounds + 6 ties),5,gradient,3859.4,2426.0,1.5908,7,7
+Hα + [NII] (bounds + 6 ties),5,solve,1401583.5,996291.5,1.4068,7,7
+Scaling N=1 Gaussians (amps tied),3,objective,511.0,572.5,0.8927,4,4
+Scaling N=1 Gaussians (amps tied),3,gradient,2018.6,1408.4,1.4332,4,4
+Scaling N=1 Gaussians (amps tied),3,solve,114417.0,95167.0,1.2023,4,4
+Scaling N=2 Gaussians (amps tied),5,objective,1116.6,1079.1,1.0348,4,4
+Scaling N=2 Gaussians (amps tied),5,gradient,3572.9,2481.4,1.4398,4,4
+Scaling N=2 Gaussians (amps tied),5,solve,676937.5,539625.0,1.2545,4,4
+Scaling N=4 Gaussians (amps tied),9,objective,2717.6,2066.7,1.3149,4,4
+Scaling N=4 Gaussians (amps tied),9,gradient,10791.0,9042.0,1.1934,4,4
+Scaling N=4 Gaussians (amps tied),9,solve,13049833.0,11337250.0,1.1511,4,4
+Scaling N=8 Gaussians (amps tied),17,objective,4297.7,4065.6,1.0571,8,8
+Scaling N=8 Gaussians (amps tied),17,gradient,37458.0,35083.0,1.0677,8,8
+Scaling N=8 Gaussians (amps tied),17,solve,596748292.0,553715208.0,1.0777,8,8
+Scaling N=16 Gaussians (amps tied),33,objective,11209.0,8069.3,1.3891,58,58
+Scaling N=16 Gaussians (amps tied),33,gradient,148875.0,119084.0,1.2502,58,58
+Scaling N=16 Gaussians (amps tied),33,solve,17088241166.0,13788237083.0,1.2393,58,58

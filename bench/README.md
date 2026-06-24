@@ -73,3 +73,45 @@ large runtime penalty.
   timing.
 - `scaling.png` — scaling ratio, isolated `withparams` time, and constrained
   render time for AstroFit vs the handwritten kernel.
+
+# Optimization benchmarks — fit-level overhead
+
+`optimization_benchmarks.jl` sits one layer above `benchmarks.jl`: instead of
+`render`, it times the **fit**. For each case (the same `kernels.jl` models) it
+compares AstroFit against a handwritten loss on three metrics:
+
+- `objective f(p)` — `ObjectiveFunction(cm, x, y, err)` vs a handwritten `chi2`;
+- `gradient ∇f(p)` — `ForwardDiff` through `withparams`+`render` vs through the
+  handwritten loss. **This is the headline:** `AutoForwardDiff` pushes `Dual`
+  numbers through `withparams` (tree rebuild + tie resolution every call), so an
+  abstraction regression shows up here first;
+- `solve(LBFGS)` — `OptimizationProblem(cm, …)` vs a hand `OptimizationFunction`.
+
+The handwritten `chi2` kernels are scalar and non-allocating (mirroring
+AstroFit's `chi2` loop) so the baseline does not pour `Dual`-array allocations
+into the gradient and skew the ratio. Each case asserts `f(p0) ≈ hand(p0)` and
+gradient equality before timing — the guard against constraints being hardcoded
+differently in the hand kernel.
+
+`solve` is the noisy metric: every case is bounded → `Fminbox(LBFGS)`, sensitive
+to ULP-level objective differences, so the two solves can land on different
+iteration counts. `iters_A vs iters_H` prints beside the ratio and it is flagged
+`⚠` when they diverge; obj+grad stay the clean signal. The `solve` timing is
+skipped above ~17 free parameters (a single bounded solve dwarfs the time budget,
+giving a slow 1-sample median).
+
+## Run
+
+This script needs Optimization, OptimizationOptimJL and ForwardDiff, which are
+weak/test deps — `--project=.` cannot load them. A dedicated `bench/`
+environment (devs AstroFit + adds the five packages) keeps the numbers
+reproducible across commits:
+
+```bash
+julia --project=bench bench/optimization_benchmarks.jl
+```
+
+It prints per-case tables and writes `optimization.csv` (medians + ratios +
+iteration counts) under `bench/results/<timestamp>`. To track a `withparams`
+change: snapshot the CSV on the current commit, apply the change, re-run, diff —
+obj+grad are where a regression would surface.
