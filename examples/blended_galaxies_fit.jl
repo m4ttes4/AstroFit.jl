@@ -121,6 +121,6 @@ Label(
     "Blended galaxies: Gaussian bulge + Sérsic disk — $(nfree(cm)) free parameters (log₁₀ stretch)";
     fontsize = 16, font = :bold
 )
-
+display(fig)
 save("examples/blended_galaxies_fit.png", fig; px_per_unit = 2)
 println("saved → examples/blended_galaxies_fit.png")
