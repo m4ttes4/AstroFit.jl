@@ -24,14 +24,15 @@ function _slotmap!(map, T, counter)
     return map
 end
 
-# How one leaf field's value is computed.
+# How one leaf field's value is computed. Uses cached locals (_p1, _p2, …) to
+# avoid redundant bounds-checked reads from the parameter vector.
 function _fieldexpr(Ci, name, fname, i, acc, slots)
     return if Ci <: Free || Ci <: Bounded
-        :(p[$(slots[(name, fname)])])
+        Symbol("_p", slots[(name, fname)])
     elseif Ci <: Fixed
         :(($acc).constraints[$i].value)
     elseif Ci <: Tied
-        args = (:(p[$(slots[path])]) for path in Ci.parameters[1])
+        args = (Symbol("_p", slots[path]) for path in Ci.parameters[1])
         :(($acc).constraints[$i].f($(args...)))
     else
         error("withparams: unknown constraint $Ci")
@@ -62,5 +63,8 @@ end
 @generated function withparams(cm::CompiledModel, p)
     T = cm.parameters[1]
     slots = _slotmap!(Dict{Tuple{Symbol, Symbol}, Int}(), T, Ref(0))
-    return _treeexpr(T, :(getfield(cm, :tree)), slots)
+    nslots = length(slots)
+    loads = [:($(Symbol("_p", i)) = @inbounds p[$i]) for i in 1:nslots]
+    tree = _treeexpr(T, :(getfield(cm, :tree)), slots)
+    return Expr(:block, loads..., tree)
 end

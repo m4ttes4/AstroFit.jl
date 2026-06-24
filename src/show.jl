@@ -152,3 +152,47 @@ function _constraint(io, c::Tied)
     return print(io, " -> ", _masters(c))
 end
 _masters(::Tied{P}) where {P} = join(("$l.$f" for (l, f) in P), ", ")
+
+# --- ObjectiveFunction summary: header (statistic · pts · weighting) + formula +
+# the free-slot list with per-slot bounds. Reuses _expr/_fmt; names/lower/upper share
+# the same DFS free-slot order (params.jl), so they index together.
+_statlabel(::Val{:chi2}) = "χ²"
+_statlabel(::Val{:negloglikelihood}) = "−loglike"
+_statlabel(::Val{:logposterior}) = "logposterior"
+_statlabel(::Val{:neglogposterior}) = "−logpost"
+_statlabel(::Val{S}) where {S} = string(S)
+
+function Base.show(io::IO, f::ObjectiveFunction)
+    w = f.err === nothing ? "" : "weighted, "
+    return print(
+        io, "ObjectiveFunction(", _expr(getfield(f.cm, :tree)), " | ",
+        _statlabel(f.statistic), ", ", length(f.y), " pts, ", w, length(f.names), " free)"
+    )
+end
+
+function Base.show(io::IO, ::MIME"text/plain", f::ObjectiveFunction)
+    printstyled(io, "ObjectiveFunction"; bold = true)
+    for s in (_statlabel(f.statistic), "$(length(f.y)) pts", f.err === nothing ? "unweighted" : "weighted")
+        printstyled(io, "  ·  "; color = :light_black)
+        print(io, s)
+    end
+    println(io)
+    print(io, "formula: ")
+    println(io, _expr(getfield(f.cm, :tree)))
+    printstyled(io, "free"; color = :green, bold = true)
+    println(io, " ($(length(f.names))):")
+    isempty(f.names) && return
+    width = maximum(length(string(n)) for n in f.names)
+    for i in eachindex(f.names)
+        print(io, "  ", rpad(string(f.names[i]), width), "   ")
+        lo, hi = f.lower[i], f.upper[i]
+        if isfinite(lo) || isfinite(hi)
+            printstyled(io, "bounds"; color = :blue, bold = true)
+            print(io, " [", _fmt(lo), ", ", _fmt(hi), "]")
+        else
+            printstyled(io, "free"; color = :green, bold = true)
+        end
+        println(io)
+    end
+    return nothing
+end

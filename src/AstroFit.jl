@@ -11,7 +11,7 @@ include("params.jl")
 include("constrain.jl")
 include("macro.jl")
 include("zoo/recipes1d.jl")
-include("fit/chi2.jl")
+include("fit/loss.jl")
 include("show.jl")
 
 export AbstractModel

@@ -405,7 +405,7 @@ hlines!(rax, [0.0]; color = :black, linewidth = 1)
 hlines!(rax, [-3.0, 3.0]; color = (:red, 0.35), linestyle = :dash, linewidth = 1)
 linkxaxes!(ax, rax)
 rowsize!(fig.layout, 2, Relative(0.24))
-
+display(fig)
 outpath = joinpath(@__DIR__, "complex_galaxy_spectrum_fit.png")
 save(outpath, fig; px_per_unit = 2)
 println("saved -> ", outpath)

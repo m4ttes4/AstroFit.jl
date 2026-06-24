@@ -19,11 +19,48 @@ end
 _coords(x::Tuple) = x
 _coords(x) = (x,)
 
-function chi2(model, coords, y, err)
-    return sum(eachindex(y)) do i
-        r = render(model, map(c -> @inbounds(c[i]), coords)...) - @inbounds(y[i])
-        err === nothing ? abs2(r) : abs2(r / @inbounds(err[i]))
+# Generic (multi-D) — peel first iteration for type stability with ForwardDiff Duals
+function chi2(model, coords, y, ::Nothing)
+    fi = firstindex(y)
+    acc = @inbounds abs2(render(model, map(c -> c[fi], coords)...) - y[fi])
+    @inbounds for i in (fi+1):lastindex(y)
+        acc += abs2(render(model, map(c -> c[i], coords)...) - y[i])
     end
+    return acc
+end
+
+function chi2(model, coords, y, err)
+    fi = firstindex(y)
+    r = @inbounds render(model, map(c -> c[fi], coords)...) - y[fi]
+    acc = abs2(r / @inbounds err[fi])
+    @inbounds for i in (fi+1):lastindex(y)
+        r = render(model, map(c -> c[i], coords)...) - y[i]
+        acc += abs2(r / err[i])
+    end
+    return acc
+end
+
+# 1D fast path — direct indexing, no map/splat
+function chi2(model, coords::Tuple{AbstractVector}, y, ::Nothing)
+    x = coords[1]
+    fi = firstindex(y)
+    acc = @inbounds abs2(render(model, x[fi]) - y[fi])
+    @inbounds for i in (fi+1):lastindex(y)
+        acc += abs2(render(model, x[i]) - y[i])
+    end
+    return acc
+end
+
+function chi2(model, coords::Tuple{AbstractVector}, y, err)
+    x = coords[1]
+    fi = firstindex(y)
+    r = @inbounds render(model, x[fi]) - y[fi]
+    acc = abs2(r / @inbounds err[fi])
+    @inbounds for i in (fi+1):lastindex(y)
+        r = render(model, x[i]) - y[i]
+        acc += abs2(r / err[i])
+    end
+    return acc
 end
 
 function check_data(x, y, err)
@@ -51,11 +88,16 @@ struct ObjectiveFunction{CM, C, Y, E, S}
     upper::Vector{Float64}
     names::Vector{Symbol}
     statistic::S
+    _loglike_const::Float64
 end
 
 function ObjectiveFunction(cm::CompiledModel, x, y, err = nothing; statistic = :chi2)
     check_data(x, y, err)
     lower, upper = bounds(cm)
+    n = length(y)
+    llc = err === nothing ?
+        -n / 2 * log(2π) :
+        -sum(log, err) - n / 2 * log(2π)
     return ObjectiveFunction(
         cm,
         _coords(x),
@@ -65,11 +107,12 @@ function ObjectiveFunction(cm::CompiledModel, x, y, err = nothing; statistic = :
         Float64.(upper),
         paramnames(cm),
         Val(statistic),
+        llc,
     )
 end
 
 (f::ObjectiveFunction)(p) = _evaluate(f.statistic, f, p)
-(f::ObjectiveFunction)(p, _) = f(p)
+(f::ObjectiveFunction)(p, _) = f(p) # Optimization.jl convention
 
 _evaluate(::Val{:chi2}, f, p) = chi2(f, p)
 _evaluate(::Val{:negloglikelihood}, f, p) = -loglikelihood(f, p)
@@ -77,15 +120,9 @@ _evaluate(::Val{:logposterior}, f, p) = logposterior(f, p)
 _evaluate(::Val{:neglogposterior}, f, p) = -logposterior(f, p)
 _evaluate(::Val{S}, _, _) where {S} = throw(ArgumentError("unknown statistic: $S"))
 
-chi2(f::ObjectiveFunction, p) = chi2(withparams(f.cm, p), f.coords, f.y, f.err)
+@inline chi2(f::ObjectiveFunction, p) = chi2(withparams(f.cm, p), f.coords, f.y, f.err)
 
-function loglikelihood(f::ObjectiveFunction, p)
-    χ2 = chi2(f, p)
-    n = length(f.y)
-    return f.err === nothing ?
-        -0.5 * χ2 - n / 2 * log(2π) :
-        -0.5 * χ2 - sum(log, f.err) - n / 2 * log(2π)
-end
+loglikelihood(f::ObjectiveFunction, p) = -0.5 * chi2(f, p) + f._loglike_const
 
 function _inside_bounds(f::ObjectiveFunction, p)
     for i in eachindex(p)

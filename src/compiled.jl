@@ -10,7 +10,7 @@ struct Leaf{name, M, C} <: AbstractModel
 end
 Leaf{name}(model::M, constraints::C) where {name, M, C} = Leaf{name, M, C}(model, constraints)
 
-render(l::Leaf, x::Number...) = render(l.model, x...)
+@inline render(l::Leaf, x::Number...) = render(l.model, x...)
 render!(out::AbstractArray, l::Leaf, x...) = render!(out, l.model, x...)
 
 # A single annotated model tree (compound nodes + Leaf leaves) plus priors.

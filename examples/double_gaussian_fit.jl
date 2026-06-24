@@ -77,5 +77,6 @@ lines!(ax, x, y_fit; color = :red, linewidth = 2, label = "best fit")
 
 axislegend(ax; position = :lt)
 
-save("examples/double_gaussian_fit.png", fig; px_per_unit = 2)
-println("saved → examples/double_gaussian_fit.png")
+display(fig)
+# save("examples/double_gaussian_fit.png", fig; px_per_unit = 2)
+# println("saved → examples/double_gaussian_fit.png")
