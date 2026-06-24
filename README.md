@@ -60,15 +60,15 @@ In astrophysics, parameters are rarely independent: two emission lines share a
 velocity width, a doublet has a fixed flux ratio, a redshift shifts the entire
 rest-frame model. Constraints are the rule, not the exception.
 
-You can write a monolithic Julia function that hardcodes everything. It's fast,
-but the moment you change the setup — add a line, drop a constraint — you end up
-rewriting half the code. Or you use a layer that resolves constraints with
-runtime lookups, but you pay that cost on every fit iteration.
+I kept writing monolithic Julia functions that hardcoded everything. Fast,
+but the moment I changed the setup (add a line, drop a constraint) I ended up
+rewriting half the code. The alternative is a layer that resolves constraints with
+runtime lookups, but then you pay that cost on every fit iteration.
 
 AstroFit tries to sit in the middle: write model components as reusable pieces,
 declare constraints explicitly, and let Julia compile the resolved path. The
 model stays inspectable and easy to modify, but the inner loop comes down to
-`withparams(cm, p)` plus `render` — no lookups, no overhead.
+`withparams(cm, p)` plus `render`, with no lookups and no overhead.
 
 Models are composed with binary operators (`+`, `*`, `|>`), a pattern common
 across fitting libraries because it makes the structure of a model immediately
@@ -100,7 +100,7 @@ end
     ha.sigma     in (0.1, Inf)
 end
 
-# 4. Fit — AstroFit builds the problem straight from the model and data
+# 4. Fit: AstroFit builds the problem straight from the model and data
 prob = OptimizationProblem(spec, λ, observed)
 sol  = solve(prob, Optim.Fminbox(Optim.LBFGS()))
 
@@ -113,15 +113,15 @@ What happened:
 - `@constrain` attached bounds in place, rebinding `spec`.
 - `OptimizationProblem(spec, λ, observed)` read `params(spec)` as the starting point
   and `bounds(spec)` as the box, automatically.
-- `withparams(spec, sol.u)` rebuilt the fitted model — print it to see the tree
+- `withparams(spec, sol.u)` rebuilt the fitted model. Print it to see the tree
   with its final values.
 
 
 
 ## Building Models
 
-AstroFit models are plain Julia structs. Each one represents a single
-component — a gaussian, a constant, a power law — and you evaluate it with
+AstroFit models are plain Julia structs. Each one is a single
+component (a gaussian, a constant, a power law) and you evaluate it with
 `render`:
 
 ```julia
@@ -130,7 +130,7 @@ render(g, 5.0)           # scalar: value at that point
 render(g, 0:0.1:10)      # vector: automatic broadcast
 ```
 
-Every built-in model has keyword arguments with defaults — you can omit the
+Every built-in model has keyword arguments with defaults, so you can omit the
 ones you don't need:
 
 ```julia
@@ -140,7 +140,7 @@ l = Linear1D(slope=0.3)         # intercept = 0.0 by default
 
 ### Composing components
 
-Components combine with ordinary operators — no special syntax needed:
+Components combine with ordinary operators, no special syntax needed:
 
 | Expression | Meaning |
 |------------|---------|
@@ -166,7 +166,7 @@ another) or **fit** the model to data, you need one more step.
 
 ### `@model`: giving names to components
 
-Constraints and fitting reference components by name — "fix `ha.mean`",
+Constraints and fitting reference components by name: "fix `ha.mean`",
 "tie `line_b.sigma` to `line_a.sigma`". Plain composition like
 `Gaussian1D(...) + Const1D(...)` is anonymous: there is no way to point at a
 specific component.
@@ -189,7 +189,7 @@ What this does:
   refer to it in `@constrain`, `@fix`, `@tie`, and when inspecting results.
 - The last expression (`bg + line_a + line_b`) is the composition.
   Every name must appear in it.
-- The result is a `CompiledModel` — the object that carries constraints
+- The result is a `CompiledModel`, the object that carries constraints
   and exposes `params`, `bounds`, `withparams`, and the rest of the fitting
   API.
 - All parameters start as free (unconstrained). Use `@constrain` to change
@@ -206,13 +206,13 @@ spec.line_a.model        # Gaussian1D(6.0, 4861.0, 1.5)
 spec.line_a.constraints  # constraint on each field: (Free(), Free(), Free())
 ```
 
-This is how you check values and constraint state at any point — before
+This is how you check values and constraint state at any point: before
 fitting, after fitting, or while debugging.
 
 
 ## Adding Constraints
 
-After `@model`, all parameters are free — the optimizer can move any of them.
+After `@model`, all parameters are free and the optimizer can move any of them.
 Constraints lock some down: fix a known wavelength, bound an amplitude to be
 positive, tie two line widths so they share the same velocity dispersion.
 Each constraint removes a degree of freedom from the fit.
@@ -221,13 +221,13 @@ There are four kinds:
 
 | Kind | Meaning | Optimizer slot? |
 |------|---------|----------------|
-| `Free()` | unconstrained — the optimizer controls it | yes |
+| `Free()` | unconstrained, the optimizer controls it | yes |
 | `Bounded(lo, hi)` | free, but confined to `[lo, hi]` | yes |
-| `Fixed(v)` | pinned to a constant — never moves | no |
+| `Fixed(v)` | pinned to a constant, never moves | no |
 | `Tied(masters, f)` | computed from other free parameters: `f(master₁, …)` | no |
 
 A `Tied` parameter references one or more free (or bounded) masters. Its
-value is always derived, never independent — so the optimizer never sees it.
+value is always derived, never independent, so the optimizer never sees it.
 Ties cannot chain: every master must itself be `Free` or `Bounded`.
 
 ### `@constrain` block
@@ -258,7 +258,7 @@ paramnames(spec)   # [:bg_slope, :bg_intercept, :line_a_amplitude, :line_a_sigma
 ```
 
 After adding constraints (see next section), the display updates to reflect
-them — fixed values turn red, bounds show their interval, tied parameters
+them: fixed values turn red, bounds show their interval, tied parameters
 show their master:
 
 ```
@@ -279,7 +279,7 @@ formula: bg + line_a + line_b
    └─ sigma      1.5     tied -> line_a.sigma
 ```
 
-Constraining the same parameter twice in one block is a compile-time error —
+Constraining the same parameter twice in one block is a compile-time error,
 no silent overwrites.
 
 ### Standalone constraint macros
@@ -389,7 +389,7 @@ loss(p) = sum(abs2, render(withparams(spec, p), λ) .- y)
 
 AstroFit ships a package extension for
 [Optimization.jl](https://github.com/SciML/Optimization.jl). Loading
-`Optimization` and `ForwardDiff` together activates it — no extra import needed.
+`Optimization` and `ForwardDiff` together activates it, no extra import needed.
 
 First, some synthetic data to work with:
 
@@ -455,7 +455,7 @@ end
 
 What is still missing is integration glue for samplers. The plan is to
 implement the [LogDensityProblems.jl](https://github.com/tpapp/LogDensityProblems.jl)
-interface as a package extension — it is the standard Julia abstraction for
+interface as a package extension. It is the standard Julia abstraction for
 log-density targets, and most MCMC samplers already accept it (AdvancedHMC.jl,
 DynamicHMC.jl, Pigeons.jl). Once that extension exists, any sampler
 that speaks LogDensityProblems should works with AstroFit models out of the box.
@@ -463,7 +463,7 @@ that speaks LogDensityProblems should works with AstroFit models out of the box.
 ### A `@component` macro for defining models
 
 The other thing I want to add is a macro for defining new model components. Right
-now, bringing your own model means writing the full boilerplate by hand — the
+now, bringing your own model means writing the full boilerplate by hand: the
 `@kwdef struct`, a `promote` constructor, and a `render` method (see
 [Extending AstroFit](#extending-astrofit)). It is not hard, but it is the same
 four blocks every time, and it is the steepest part of the learning curve. I want
@@ -484,7 +484,7 @@ after it. From that one line the macro would generate everything the model
 protocol needs: the parametric `@kwdef struct <: AbstractModel`, the `promote`
 constructor that keeps the field types uniform, and the scalar `render` method
 (rewriting each bare parameter name into a field access on the model). I would
-not generate a hand-tuned `render!` — the generic broadcasting fallback already
+not generate a hand-tuned `render!`. The generic broadcasting fallback already
 covers it, and the per-model loops in the zoo stay as opt-in micro-optimisations.
 
 The `Gaussian1D` line above expands to exactly what the built-in zoo models
@@ -525,7 +525,7 @@ runtime lookup.
 ![AstroFit benchmark scaling](bench/scaling.png)
 
 The answer is essentially zero overhead, and it holds as the model grows. The
-plot sweeps `N` Gaussians (2–64) where every amplitude past the first is tied
+plot sweeps `N` Gaussians (2 to 64) where every amplitude past the first is tied
 to the first, compared against a handwritten baseline over 400 points:
 
 | N | free params | AstroFit | Handwritten | ratio |
@@ -551,9 +551,9 @@ The scaling benchmark measures render cost in isolation. A fairer question is
 what happens through the whole fitting stack: chi2, gradients, optimization.
 
 The test is an Hα + [NII] triplet: linear continuum + three Gaussians, [NII]
-amplitudes and means tied to Hα by atomic physics ratios, all sigmas shared —
+amplitudes and means tied to Hα by atomic physics ratios, all sigmas shared.
 5 free parameters, 1000 points. The handwritten baseline is a scalar
-`@inbounds` loop with ties hardcoded — what you'd write for speed.
+`@inbounds` loop with ties hardcoded, the kind of thing you'd write for speed.
 
 |                | AstroFit       | Handwritten     | Ratio        |
 |----------------|----------------|-----------------|--------------|
@@ -562,7 +562,7 @@ amplitudes and means tied to Hα by atomic physics ratios, all sigmas shared —
 | gradient       | 25.7 µs        | 21.3 µs         | 1.21x        |
 | optimization   | 76.4 ms        | 61.3 ms         | 1.25x        |
 
-On the forward path (render, chi2) AstroFit is slightly faster — its internal
+On the forward path (render, chi2) AstroFit is slightly faster because its internal
 `@fastmath` works well on `Float64`. The gradient and optimization show ~20%
 overhead: `withparams` rebuilds struct trees with `Dual` numbers on every call,
 which costs a bit more than a flat function that ForwardDiff can differentiate
@@ -668,7 +668,7 @@ the full script.
 ### Redshifted galaxy spectrum flagship fit (1D)
 
 This is the kind of fit I built AstroFit for. The spectrum is a synthetic AGN
-host-galaxy covering the Hα–[NII]–[SII] window — the region where you typically
+host-galaxy covering the Hα/[NII]/[SII] window, the region where you typically
 have the most going on at once: a curved continuum (linear + power law), narrow
 Balmer emission from the host (Hα, Hβ), broad Balmer components from the AGN,
 forbidden-line doublets ([OIII] 4959/5007, [NII] 6548/6583, [SII] 6716/6731),
@@ -678,7 +678,7 @@ The model has 43 raw parameters, but most of them aren't independent. Doublet
 ratios like [OIII] and [NII] are set by atomic physics, Hβ is tied to Hα through
 the Balmer decrement, all narrow lines share one velocity width, broad lines
 share another, and rest wavelengths don't move. Once you write those constraints
-down, only 15 parameters are actually free — and those are the only ones the
+down, only 15 parameters are actually free, and those are the only ones the
 optimizer touches.
 
 ```julia
@@ -736,8 +736,8 @@ for the full script.
 
 ## Extending AstroFit
 
-The built-in models cover the most common shapes — gaussians, lorentzians,
-power laws, polynomials — but sooner or later you'll need something specific:
+The built-in models cover the most common shapes (gaussians, lorentzians,
+power laws, polynomials) but sooner or later you'll need something specific:
 a dust extinction curve, a blackbody, a custom line profile, a coordinate
 transform. AstroFit is designed for this: any Julia struct can become a model
 component, and it takes two things.
@@ -755,7 +755,7 @@ end
 ```
 
 One thing to watch: the type parameter `T` should be `<:Real`, not `Float64`.
-ForwardDiff works by passing dual numbers through your model — if you hardcode
+ForwardDiff works by passing dual numbers through your model. If you hardcode
 `Float64`, gradient-based fitting will break.
 
 ### Step 2: define `render`
@@ -771,8 +771,8 @@ function AstroFit.render(m::Blackbody1D, λ::Number)
 end
 ```
 
-The coordinate argument (`λ`, `x`, `ν` — whatever makes sense) must accept
-`Number`, not just `Float64`, again for the same AD reason. That's it — your
+The coordinate argument (`λ`, `x`, `ν`, whatever makes sense) must accept
+`Number`, not just `Float64`, again for the same AD reason. That's it, your
 model is ready.
 
 ### Using it
@@ -795,7 +795,7 @@ end
 
 ### Coordinate transforms
 
-Not every model produces flux. Some transform coordinates — a redshift, a
+Not every model produces flux. Some transform coordinates: a redshift, a
 velocity offset, a wavelength-to-energy conversion. These work through
 composition with `∘`:
 
@@ -822,7 +822,7 @@ end
 
 ### Optional: `render!` for speed
 
-The scalar `render` is all you need — AstroFit will broadcast it over arrays
+The scalar `render` is all you need. AstroFit will broadcast it over arrays
 automatically. But if your model has work that can be shared across points
 (precomputing constants, avoiding repeated allocations), you can define an
 in-place `render!` that fills a preallocated output array:
@@ -838,7 +838,7 @@ function AstroFit.render!(out::AbstractArray, m::Blackbody1D, λs::AbstractArray
 end
 ```
 
-This is purely optional — define it when profiling shows it matters.
+This is purely optional. Define it when profiling shows it matters.
 
 ---
 
