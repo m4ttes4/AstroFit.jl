@@ -539,35 +539,62 @@ runtime lookup.
 ![AstroFit benchmark scaling](bench/scaling.png)
 
 The answer is essentially zero overhead, and it holds as the model grows. The
-plot sweeps a chain of `N` Gaussians where every amplitude past the first is tied
-to the first — so `N` submodels and `N-1` ties — and compares it against the
-hardcoded baseline over 400 points:
+plot sweeps `N` Gaussians (2–64) where every amplitude past the first is tied
+to the first, compared against a handwritten baseline over 400 points:
 
-| N (submodels / ties / free) | `withparams` alone | render(withparams) | handwritten | render! in place | ratio |
-|---|---|---|---|---|---|
-| 8 / 7 / 17    | 3.6 ns, 0 B  | 10.7 µs / 3.2 KB | 10.5 µs / 3.2 KB | 0 B | 1.01x |
-| 32 / 31 / 65  | 24 ns, 0 B   | 47.7 µs / 3.2 KB | 41.4 µs / 3.2 KB | 0 B | 1.15x |
-| 64 / 63 / 129 | 56 ns, 0 B   | 115.7 µs / 3.2 KB | 115.7 µs / 3.2 KB | 0 B | 1.00x |
+| N | free params | AstroFit | Handwritten | ratio |
+|---|---|---|---|---|
+| 2   |   5 |   2.6 µs |   2.8 µs | 0.95x |
+| 8   |  17 |  10.2 µs |  10.5 µs | 0.97x |
+| 32  |  65 |  40.4 µs |  41.3 µs | 0.98x |
+| 64  | 129 |  99.7 µs | 101.1 µs | 0.99x |
 
-`withparams` is `@generated`, so the interesting work — scattering the flat `p`
-into the model and resolving fixed/tied parameters — happens at compile time by
-walking the tree *type*. What is left at runtime is unrolled straight-line code
-that builds immutable structs: no loops, no dictionary lookup, no dynamic
-dispatch. So it stays allocation-free and tiny even with 63 ties (56 ns at N=64),
-scaling roughly linearly with the number of fields. **The number of ties adds no
-allocation and no dispatch** — each tie is an inlined closure call resolved when
-the function is generated.
+Every ratio sits at or below 1.0 — AstroFit never costs more than the
+handwritten version.
 
-The render itself tracks the handwritten baseline (1.01x at N=8, 1.00x at N=64);
-it is dominated by the `exp` calls, which both versions pay identically. The
-1.15x at N=32 is jitter, not a trend — it is gone again by N=64. At the µs scale
-there is run-to-run noise from how the two render paths vectorise, but no
-systematic divergence as ties grow.
+`withparams` is `@generated`: scattering `p` into the model and resolving ties
+happens at compile time. What runs is unrolled straight-line code that builds
+immutable structs — no loops, no dictionary lookup, no dispatch. It stays
+allocation-free and tiny even with 63 ties (56 ns at N=64). The render itself
+is dominated by `exp` calls, which both versions pay identically.
 
-The only allocation is the output array itself — the same 3.2 KB any handwritten
-version pays. Use `render!` to write into a preallocated buffer and that
-disappears too (0 B at every N). The scalar hot path inside the fit (`_chi2` sums
-`render(model, x[i])` point by point) never allocates at all.
+### Full fitting stack: Hα + [NII] triplet
+
+The scaling benchmark measures render cost in isolation. A fairer question is
+what happens through the whole fitting stack — chi2, gradients, optimization.
+
+The test is an Hα + [NII] triplet: linear continuum + three Gaussians, [NII]
+amplitudes and means tied to Hα by atomic physics ratios, all sigmas shared —
+5 free parameters, 1000 points. The handwritten baseline is a scalar
+`@inbounds` loop with ties hardcoded — what you'd write for speed.
+
+|                | AstroFit       | Handwritten     | Ratio        |
+|----------------|----------------|-----------------|--------------|
+| render         | 9.7 µs         | 10.4 µs         | 0.94x        |
+| chi2           | 10.4 µs        | 11.3 µs         | 0.92x        |
+| gradient       | 25.7 µs        | 21.3 µs         | 1.21x        |
+| optimization   | 76.4 ms        | 61.3 ms         | 1.25x        |
+
+On the forward path (render, chi2) AstroFit is slightly faster — its internal
+`@fastmath` works well on `Float64`. The gradient and optimization show ~20%
+overhead: `withparams` rebuilds struct trees with `Dual` numbers on every call,
+which costs a bit more than a flat function that ForwardDiff can differentiate
+in one pass. That's the real price of the abstraction layer.
+
+A note on `@fastmath`: if the handwritten baseline uses `@fastmath` inside the
+loop (a common pattern), the gradient gap flips to ~4x *in AstroFit's favor* —
+but that's a ForwardDiff footgun, not an AstroFit feature. `@fastmath` rewrites
+floating-point operations in ways that interact badly with dual numbers.
+AstroFit's design happens to dodge this because `withparams` runs once before
+the loop, but taking credit for it would be misleading. The numbers above use a
+fair baseline without `@fastmath`. See
+[`bench/gradient_benchmark.jl`](bench/gradient_benchmark.jl) for the
+`@fastmath` investigation.
+
+See [`bench/astrofit_vs_handwritten.jl`](bench/astrofit_vs_handwritten.jl) for
+the full benchmark script.
+
+### Caveats
 
 Two caveats: this holds because everything stays type-stable and concrete —
 build the `CompiledModel` once outside the loop, not inside it. The ForwardDiff

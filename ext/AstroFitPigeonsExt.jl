@@ -5,12 +5,12 @@ using Pigeons: Pigeons, DistributionLogPotential
 using Pigeons.Random: AbstractRNG
 using Distributions: Uniform, product_distribution
 
-function Pigeons.initialization(f::AstroFit.ObjectiveFunction, ::AbstractRNG, ::Int)
+function Pigeons.initialization(f::AstroFit.ObjectiveFunction, rng::AbstractRNG, ::Int)
     f.statistic === Val(:chi2) && throw(ArgumentError(
         "Pigeons requires a log-density statistic, got :chi2. " *
         "Use `ObjectiveFunction(cm, x, y, err; statistic = :neglogposterior)` or `:negloglikelihood`."
     ))
-    return AstroFit.params(f.cm)
+    return rand(rng, f.cm)
 end
 
 

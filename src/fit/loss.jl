@@ -19,18 +19,45 @@ end
 _coords(x::Tuple) = x
 _coords(x) = (x,)
 
+# Generic (multi-D) — peel first iteration for type stability with ForwardDiff Duals
 function chi2(model, coords, y, ::Nothing)
-    acc = zero(Float64)
-    @inbounds @fastmath for i in eachindex(y)
+    fi = firstindex(y)
+    acc = @inbounds abs2(render(model, map(c -> c[fi], coords)...) - y[fi])
+    @inbounds for i in (fi+1):lastindex(y)
         acc += abs2(render(model, map(c -> c[i], coords)...) - y[i])
     end
     return acc
 end
 
 function chi2(model, coords, y, err)
-    acc = zero(Float64)
-    @inbounds @fastmath for i in eachindex(y)
+    fi = firstindex(y)
+    r = @inbounds render(model, map(c -> c[fi], coords)...) - y[fi]
+    acc = abs2(r / @inbounds err[fi])
+    @inbounds for i in (fi+1):lastindex(y)
         r = render(model, map(c -> c[i], coords)...) - y[i]
+        acc += abs2(r / err[i])
+    end
+    return acc
+end
+
+# 1D fast path — direct indexing, no map/splat
+@inline function chi2(model, coords::Tuple{AbstractVector}, y, ::Nothing)
+    x = coords[1]
+    fi = firstindex(y)
+    acc = @inbounds abs2(render(model, x[fi]) - y[fi])
+    @inbounds for i in (fi+1):lastindex(y)
+        acc += abs2(render(model, x[i]) - y[i])
+    end
+    return acc
+end
+
+@inline function chi2(model, coords::Tuple{AbstractVector}, y, err)
+    x = coords[1]
+    fi = firstindex(y)
+    r = @inbounds render(model, x[fi]) - y[fi]
+    acc = abs2(r / @inbounds err[fi])
+    @inbounds for i in (fi+1):lastindex(y)
+        r = render(model, x[i]) - y[i]
         acc += abs2(r / err[i])
     end
     return acc
@@ -93,7 +120,7 @@ _evaluate(::Val{:logposterior}, f, p) = logposterior(f, p)
 _evaluate(::Val{:neglogposterior}, f, p) = -logposterior(f, p)
 _evaluate(::Val{S}, _, _) where {S} = throw(ArgumentError("unknown statistic: $S"))
 
-chi2(f::ObjectiveFunction, p) = chi2(withparams(f.cm, p), f.coords, f.y, f.err)
+@inline chi2(f::ObjectiveFunction, p) = chi2(withparams(f.cm, p), f.coords, f.y, f.err)
 
 loglikelihood(f::ObjectiveFunction, p) = -0.5 * chi2(f, p) + f._loglike_const
 

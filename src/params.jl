@@ -4,6 +4,8 @@
 # recursion — setup-time, not hot path, so no @generated. Tuples + collect (not vcat) so an
 # all-Fixed/Tied leaf contributes () without poisoning the element type.
 
+using Random: Random, AbstractRNG
+
 _isfree(c) = c isa Free || c isa Bounded
 
 nfree(cm::CompiledModel) = _nfree(getfield(cm, :tree))
@@ -33,3 +35,15 @@ _pnames(l::Leaf{name}) where {name} =
         for (i, c) in enumerate(l.constraints) if _isfree(c)
 )
 _pnames(n) = (_pnames(n.left)..., _pnames(n.right)...)
+
+# rand: sample free parameters uniformly within bounds.
+function Random.rand(rng::AbstractRNG, cm::CompiledModel)
+    lb, ub = bounds(cm)
+    names = paramnames(cm)
+    for i in eachindex(lb, ub)
+        (isfinite(lb[i]) && isfinite(ub[i])) || throw(ArgumentError(
+            "parameter `$(names[i])` has no finite bounds — set bounds with `@bound` before sampling"))
+    end
+    return [lb[i] + (ub[i] - lb[i]) * rand(rng) for i in eachindex(lb, ub)]
+end
+Random.rand(cm::CompiledModel) = rand(Random.default_rng(), cm)
