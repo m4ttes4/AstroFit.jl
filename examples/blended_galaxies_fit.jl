@@ -37,10 +37,10 @@ err = fill(σ_noise, size(X))
 # 3. Fitting model — deliberately bad initial guess + constraints
 # ---------------------------------------------------------------------------
 cm = @model begin
-    bulge1 = Gaussian2D(amplitude = 20.0, x0 = -3.5, y0 = 0.5, sigma = 2.5, q = 1.0, theta = 0.0)
-    disk1 = Sersic2D(amplitude = 8.0, x0 = -3.5, y0 = 0.5, r_eff = 5.0, n = 1.0, q = 0.9, theta = 0.0)
-    bulge2 = Gaussian2D(amplitude = 15.0, x0 = 4.5, y0 = 0.0, sigma = 1.5, q = 1.0, theta = 0.0)
-    disk2 = Sersic2D(amplitude = 5.0, x0 = 4.5, y0 = 0.0, r_eff = 4.5, n = 1.0, q = 0.9, theta = 0.0)
+    bulge1 = Gaussian2D(amplitude = 40.0, x0 = -3.5, y0 = 0.5, sigma = 1.8, q = 0.9, theta = 0.3)
+    disk1 = Sersic2D(amplitude = 12.0, x0 = -3.5, y0 = 0.5, r_eff = 5.0, n = 1.0, q = 0.7, theta = 0.3)
+    bulge2 = Gaussian2D(amplitude = 20.0, x0 = 4.5, y0 = 0.0, sigma = 1.2, q = 0.9, theta = -0.2)
+    disk2 = Sersic2D(amplitude = 8.0, x0 = 4.5, y0 = 0.0, r_eff = 4.0, n = 1.0, q = 0.8, theta = -0.2)
     bulge1 + disk1 + bulge2 + disk2
 end
 

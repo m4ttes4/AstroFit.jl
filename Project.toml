@@ -8,6 +8,7 @@ Accessors = "7d9f7c33-5ae7-4f3b-8dc6-eff91059b697"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 Pigeons = "0eb8d820-af6a-4919-95ae-11206f830c31"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 
 [weakdeps]
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
