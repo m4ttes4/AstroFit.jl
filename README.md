@@ -343,38 +343,36 @@ need to know about constraints.
 
 ## Fitting
 
-AstroFit provides a built-in likelihood layer and a solver-agnostic `objective`
-function. You can also write a plain loss function by hand — either way, the hot
-path is `withparams` + `render`.
+AstroFit provides a built-in likelihood layer through `ObjectiveFunction`, which
+powers the package extensions for Optimization.jl, You can also write a plain loss function by hand.
 
-### Built-in objective
+### ObjectiveFunction
 
-`objective(cm, x, y)` returns a closure `u -> -logposterior(cm, u, x, y, err)`
-ready to **minimise** over the flat parameter vector. Without priors it is the
-negative Gaussian log-likelihood; with `err = nothing` (the default) it assumes
-unit variance (equivalent to least squares):
+`ObjectiveFunction(cm, x, y, err; statistic)` bundles a model with data. The
+default statistic is `:chi2`; other options are `:negloglikelihood`,
+`:logposterior`, and `:neglogposterior`.
 
 ```julia
-λ = collect(6540.0:0.5:6590.0)
-y = render(withparams(fit, params(fit)), λ)
+λ   = collect(6540.0:0.5:6590.0)
+y   = render(withparams(spec, params(spec)), λ) .+ 0.1 .* randn(length(λ))
+err = fill(0.1, length(λ))
 
-loss = objective(fit, λ, y)
-loss(params(fit))   # minimum at the truth
+obj = ObjectiveFunction(spec, λ, y, err)          # chi2 by default
+obj(params(spec))                                  # evaluate at current params
 ```
 
-Pass per-point standard deviations to get a weighted likelihood:
-
-```julia
-err = fill(0.1, length(y))
-loss_w = objective(fit, λ, y; err)
-```
-
-The objective is fully differentiable — gradient-based optimizers and AD work
-out of the box:
+It is fully differentiable, gradient-based optimizers and AD work out of the
+box:
 
 ```julia
 using ForwardDiff
-ForwardDiff.gradient(loss, params(fit))   # 5-element gradient
+ForwardDiff.gradient(obj, params(spec))
+```
+
+For Bayesian sampling, use a log-density statistic:
+
+```julia
+obj_bayes = ObjectiveFunction(spec, λ, y, err; statistic = :neglogposterior)
 ```
 
 ### Manual loss function
@@ -383,19 +381,7 @@ If you need a custom objective (e.g. Cash statistic, regularisation), build it
 directly from `withparams` + `render`:
 
 ```julia
-loss_lsq(p) = sum(abs2, render(withparams(fit, p), λ) .- y)
-```
-
-### Choosing a solver
-
-`params(fit)` gives the starting point, `bounds(fit)` gives the box. Hand them
-to any Julia optimizer:
-
-```julia
-# using Optim
-# lo, hi = bounds(fit)
-# res = optimize(loss, lo, hi, params(fit), Fminbox(LBFGS()))
-# best = withparams(fit, Optim.minimizer(res))
+loss(p) = sum(abs2, render(withparams(spec, p), λ) .- y)
 ```
 
 
@@ -432,7 +418,7 @@ end
 end
 
 prob = OptimizationProblem(spec, λ, y)
-sol  = solve(prob, Optim.Fminbox(Optim.LBFGS()))
+sol  = solve(prob, LBFGS())
 
 best = withparams(spec, sol.u)
 ```
@@ -549,19 +535,20 @@ to the first, compared against a handwritten baseline over 400 points:
 | 32  |  65 |  40.4 µs |  41.3 µs | 0.98x |
 | 64  | 129 |  99.7 µs | 101.1 µs | 0.99x |
 
-Every ratio sits at or below 1.0 — AstroFit never costs more than the
-handwritten version.
+Every ratio sits at or below 1.0. 
+AstroFit never costs more than the
+handwritten version. (That's the goal)
 
 `withparams` is `@generated`: scattering `p` into the model and resolving ties
 happens at compile time. What runs is unrolled straight-line code that builds
-immutable structs — no loops, no dictionary lookup, no dispatch. It stays
+immutable structs, no loops, no dictionary lookup, no dispatch. It stays
 allocation-free and tiny even with 63 ties (56 ns at N=64). The render itself
 is dominated by `exp` calls, which both versions pay identically.
 
 ### Full fitting stack: Hα + [NII] triplet
 
 The scaling benchmark measures render cost in isolation. A fairer question is
-what happens through the whole fitting stack — chi2, gradients, optimization.
+what happens through the whole fitting stack: chi2, gradients, optimization.
 
 The test is an Hα + [NII] triplet: linear continuum + three Gaussians, [NII]
 amplitudes and means tied to Hα by atomic physics ratios, all sigmas shared —
@@ -581,28 +568,10 @@ overhead: `withparams` rebuilds struct trees with `Dual` numbers on every call,
 which costs a bit more than a flat function that ForwardDiff can differentiate
 in one pass. That's the real price of the abstraction layer.
 
-A note on `@fastmath`: if the handwritten baseline uses `@fastmath` inside the
-loop (a common pattern), the gradient gap flips to ~4x *in AstroFit's favor* —
-but that's a ForwardDiff footgun, not an AstroFit feature. `@fastmath` rewrites
-floating-point operations in ways that interact badly with dual numbers.
-AstroFit's design happens to dodge this because `withparams` runs once before
-the loop, but taking credit for it would be misleading. The numbers above use a
-fair baseline without `@fastmath`. See
-[`bench/gradient_benchmark.jl`](bench/gradient_benchmark.jl) for the
-`@fastmath` investigation.
-
 See [`bench/astrofit_vs_handwritten.jl`](bench/astrofit_vs_handwritten.jl) for
 the full benchmark script.
 
-### Caveats
 
-Two caveats: this holds because everything stays type-stable and concrete —
-build the `CompiledModel` once outside the loop, not inside it. The ForwardDiff
-path stays clean: `p` becomes `Dual`, `withparams` rebuilds `Gaussian1D{Dual}`,
-still type-stable.
-
-See [`bench/README.md`](bench/README.md) for the benchmark script, command, and
-current numbers.
 
 
 
