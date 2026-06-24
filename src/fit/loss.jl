@@ -19,11 +19,21 @@ end
 _coords(x::Tuple) = x
 _coords(x) = (x,)
 
-function chi2(model, coords, y, err)
-    return @inbounds @fastmath sum(eachindex(y)) do i
-        r = render(model, map(c -> c[i], coords)...) - y[i]
-        err === nothing ? abs2(r) : abs2(r / err[i])
+function chi2(model, coords, y, ::Nothing)
+    acc = zero(Float64)
+    @inbounds @fastmath for i in eachindex(y)
+        acc += abs2(render(model, map(c -> c[i], coords)...) - y[i])
     end
+    return acc
+end
+
+function chi2(model, coords, y, err)
+    acc = zero(Float64)
+    @inbounds @fastmath for i in eachindex(y)
+        r = render(model, map(c -> c[i], coords)...) - y[i]
+        acc += abs2(r / err[i])
+    end
+    return acc
 end
 
 function check_data(x, y, err)
