@@ -82,7 +82,7 @@ end
 prob = OptimizationProblem(cm, (X, Y), img_data, err)
 sol = solve(prob, Fminbox(LBFGS()))
 
-fit = withparams(cm, sol.u)
+fit = withparams(cm, sol.u) 
 
 println("retcode         : ", sol.retcode)
 println("free parameters : ", nfree(cm))
