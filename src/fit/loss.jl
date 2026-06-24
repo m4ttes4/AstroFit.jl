@@ -41,7 +41,7 @@ function chi2(model, coords, y, err)
 end
 
 # 1D fast path — direct indexing, no map/splat
-@inline function chi2(model, coords::Tuple{AbstractVector}, y, ::Nothing)
+function chi2(model, coords::Tuple{AbstractVector}, y, ::Nothing)
     x = coords[1]
     fi = firstindex(y)
     acc = @inbounds abs2(render(model, x[fi]) - y[fi])
@@ -51,7 +51,7 @@ end
     return acc
 end
 
-@inline function chi2(model, coords::Tuple{AbstractVector}, y, err)
+function chi2(model, coords::Tuple{AbstractVector}, y, err)
     x = coords[1]
     fi = firstindex(y)
     r = @inbounds render(model, x[fi]) - y[fi]
