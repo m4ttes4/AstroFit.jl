@@ -3,7 +3,7 @@ module AstroFitPigeonsExt
 using AstroFit
 using Pigeons: Pigeons, DistributionLogPotential
 using Pigeons.Random: AbstractRNG
-using Distributions: Distributions, Uniform, product_distribution
+using Distributions: Uniform, product_distribution
 
 function Pigeons.initialization(f::AstroFit.ObjectiveFunction, ::AbstractRNG, ::Int)
     f.statistic === Val(:chi2) && throw(ArgumentError(

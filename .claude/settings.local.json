@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(julia *)"
+      "Bash(julia *)",
+      "Bash(rtk git *)",
+      "Bash(rtk grep *)",
+      "Bash(rtk ls *)",
+      "Bash(rtk read *)"
     ]
   }
 }
