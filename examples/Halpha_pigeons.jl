@@ -249,6 +249,8 @@ axislegend(ax_hist[1]; position=:lt, framevisible=false)
 
 rowsize!(fig.layout, 2, Relative(0.35))
 
-outpath = joinpath(@__DIR__, "Halpha_pigeons.png")
-save(outpath, fig; px_per_unit=2)
-println("\nsaved -> ", outpath)
+
+
+# outpath = joinpath(@__DIR__, "Halpha_pigeons.png")
+# save(outpath, fig; px_per_unit=2)
+# println("\nsaved -> ", outpath)

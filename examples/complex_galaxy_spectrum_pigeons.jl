@@ -240,7 +240,7 @@ cm = galaxy_spectrum_model(
 )
 
 lambda = collect(range(4900.0, 7100.0; length = 1400))
-truth = withparams(truth_cm, params(truth_cm))
+truth = withparams(truth_cm, AstroFit.params(truth_cm))
 flux_true = render(truth, lambda)
 err = 0.055 .+ 0.018 .* sqrt.(clamp.(flux_true, 0.0, Inf))
 flux = flux_true .+ err .* randn(length(lambda))
