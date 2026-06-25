@@ -1,6 +1,6 @@
 abstract type AbstractModel end
 
-Base.broadcastable(m::AbstractModel) = Ref(m)
+Base.broadcastable(m::AbstractModel) = (m,)
 
 render(m::AbstractModel, xs::AbstractArray...) = render.(m, xs...)
 

@@ -18,6 +18,10 @@ struct CompiledModel{T, P}
     tree::T
     priors::P
 end
+
+CompiledModel(tree) = CompiledModel(tree, nothing)
+
+
 render(cm::CompiledModel, x...) = render(getfield(cm, :tree), x...)
 render!(out::AbstractArray, cm::CompiledModel, x...) = render!(out, getfield(cm, :tree), x...)
 

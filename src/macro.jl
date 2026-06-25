@@ -1,13 +1,29 @@
-# @model begin
-#     g1 = Gaussian1D(...)        # leaf: name = model expression
-#     g2 = Gaussian1D(...)
-#     g1 + g2                     # the composition (one trailing expression)
-# end
-#
-# Each `name = expr` binds `name` to a Leaf{:name}(model, all-Free constraints). The
-# composition is left untouched: the compound operators evaluate it and, since
-# Leaf <: AbstractModel, build the annotated tree directly — the macro never parses it.
-# Constraints stay all-Free here; @constrain edits them later.
+"""
+    @model begin
+        name₁ = ModelExpr(...)
+        name₂ = ModelExpr(...)
+        name₁ + name₂
+    end
+
+Build a [`CompiledModel`](@ref) from named leaf models and a composition expression.
+
+Each `name = expr` line creates a [`Leaf`](@ref) with all-[`Free`](@ref) constraints.
+The final expression (e.g. `name₁ + name₂`) defines how leaves combine; compound
+operators (`+`, `*`, `|`) build the tree. Constraints are set afterwards via
+[`@constrain`](@ref) or the standalone macros ([`@fix`](@ref), [`@bound`](@ref),
+[`@tie`](@ref), [`@free`](@ref), [`@prior`](@ref)).
+
+# Examples
+```julia
+m = @model begin
+    g1 = Gaussian1D(amplitude=1.0, mean=0.0, stddev=1.0)
+    g2 = Gaussian1D(amplitude=0.5, mean=3.0, stddev=0.8)
+    g1 + g2
+end
+```
+
+See also: [`@constrain`](@ref), [`CompiledModel`](@ref)
+"""
 macro model(blk)
     blk isa Expr && blk.head === :block || error("@model expects a begin…end block")
     defs = Any[]
@@ -36,11 +52,21 @@ macro model(blk)
     end
 end
 
-# Default constraints for a fresh leaf: every field free.
+"""
+    _defaults(m) -> NTuple{N, Free}
+
+Return a tuple of [`Free`](@ref) constraints, one per field of `m`.
+"""
 _defaults(m) = ntuple(_ -> Free(), fieldcount(typeof(m)))
 
-# Wrap the tree, rejecting a leaf used more than once — its (name, field) slots would
-# collide in withparams. Sharing a value across components is Tied's job, not aliasing.
+"""
+    _compiled(tree) -> CompiledModel
+
+Wrap `tree` in a [`CompiledModel`](@ref), rejecting duplicate leaf names.
+
+Duplicate leaves would collide in [`withparams`](@ref); use [`Tied`](@ref) to share
+values across components instead.
+"""
 function _compiled(tree)
     names = Symbol[]
     _leafnames!(names, tree)
@@ -93,6 +119,20 @@ _fixcurrent(root, l, f) = :(Fixed(getfield(getproperty($root, $(QuoteNode(l))).m
 #   @fix m.leaf.field = value   →   m = setconstraint(m, :leaf, :field, Fixed(value))
 # ---------------------------------------------------------------------------
 
+"""
+    @fix model.leaf.field = value
+    @fix model.leaf.field
+
+Fix a parameter to `value`, or to its current value if no `=` is given.
+
+# Examples
+```julia
+@fix m.g1.amplitude = 1.0   # fix to explicit value
+@fix m.g1.amplitude          # fix at current value
+```
+
+See also: [`@free`](@ref), [`@bound`](@ref), [`@tie`](@ref), [`@constrain`](@ref)
+"""
 macro fix(a)
     return if a isa Expr && a.head === :(=)
         (r, l, f) = _splitpath(a.args[1])
@@ -108,6 +148,23 @@ macro fix(a)
     end
 end
 
+"""
+    @tie model.leaf.field -> expression
+
+Tie a parameter to an expression of other model parameters.
+
+The right-hand side may reference other `model.leaf.field` paths, which become
+the master parameters. The tied parameter is computed from them via the given
+expression and consumes no free-parameter slot.
+
+# Examples
+```julia
+@tie m.g2.mean -> m.g1.mean + 0.5
+@tie m.g2.stddev -> 2 * m.g1.stddev
+```
+
+See also: [`Tied`](@ref), [`@fix`](@ref), [`@constrain`](@ref)
+"""
 macro tie(a)
     a isa Expr && a.head === :-> || error("@tie expects `model.leaf.field -> expression`")
     lhs = a.args[1]
@@ -120,6 +177,19 @@ macro tie(a)
     return :($(esc(r)) = $(_setexpr(esc(r), l, f, c)))
 end
 
+"""
+    @bound model.leaf.field in (lower, upper)
+
+Constrain a parameter to the interval `[lower, upper]`.
+
+# Examples
+```julia
+@bound m.g1.amplitude in (0.0, 10.0)
+@bound m.g1.mean in (-5.0, 5.0)
+```
+
+See also: [`Bounded`](@ref), [`@fix`](@ref), [`@free`](@ref), [`@constrain`](@ref)
+"""
 macro bound(a)
     a isa Expr && a.head === :call && a.args[1] === :in &&
         length(a.args) == 3 && a.args[3] isa Expr && a.args[3].head === :tuple &&
@@ -132,12 +202,38 @@ macro bound(a)
     return :($(esc(r)) = $(_setexpr(esc(r), l, f, c)))
 end
 
+"""
+    @free model.leaf.field
+
+Remove any constraint on a parameter, making it free again.
+
+# Examples
+```julia
+@free m.g1.amplitude
+```
+
+See also: [`Free`](@ref), [`@fix`](@ref), [`@bound`](@ref), [`@constrain`](@ref)
+"""
 macro free(p)
     (r, l, f) = _splitpath(p)
     r isa Symbol || error("nested paths require @constrain block")
     return :($(esc(r)) = $(_setexpr(esc(r), l, f, :(Free()))))
 end
 
+"""
+    @prior model.leaf.field ~ distribution
+
+Attach a prior distribution to a parameter.
+
+# Examples
+```julia
+using Distributions
+@prior m.g1.amplitude ~ Normal(1.0, 0.5)
+@prior m.g1.mean ~ Uniform(-5.0, 5.0)
+```
+
+See also: [`setprior`](@ref), [`logprior`](@ref), [`@constrain`](@ref)
+"""
 macro prior(a)
     a isa Expr && a.head === :call && a.args[1] === :~ && length(a.args) == 3 ||
         error("@prior expects `model.leaf.field ~ distribution`")
@@ -146,20 +242,39 @@ macro prior(a)
     return :($(esc(r)) = setprior($(esc(r)), $(QuoteNode(l)), $(QuoteNode(f)), $(esc(a.args[3]))))
 end
 
-# ---------------------------------------------------------------------------
-# @constrain block — syntactic sugar with auto-rebind.
-#
-#   @constrain m begin
-#       narrow.amplitude              # fix at current value
-#       narrow.amplitude = 1.0        # fix at value
-#       broad.mean -> narrow.mean     # tie
-#       narrow.mean in (-1, 1)        # bound
-#       narrow.mean ~ Normal(0, 1)    # prior
-#       @free narrow.mean             # free
-#   end
-# ---------------------------------------------------------------------------
+"""
+    @constrain model begin
+        leaf.field                    # fix at current value
+        leaf.field = value            # fix at explicit value
+        leaf.field -> expression      # tie to other parameters
+        leaf.field in (lo, hi)        # bound to interval
+        leaf.field ~ distribution     # attach prior
+        @free leaf.field              # unconstrain
+    end
 
-# Prefix bare leaf.field with the gensym root: narrow.amplitude → g.narrow.amplitude.
+Apply multiple constraints to a [`CompiledModel`](@ref) in a single block.
+
+Paths are written as `leaf.field` (without the model prefix). Each constraint form
+mirrors its standalone macro ([`@fix`](@ref), [`@tie`](@ref), [`@bound`](@ref),
+[`@prior`](@ref), [`@free`](@ref)). A given `leaf.field` may only appear once in the
+block (except for priors, which are orthogonal to constraints). The model variable is
+automatically rebound after validation.
+
+# Examples
+```julia
+@constrain m begin
+    g1.amplitude = 1.0
+    g1.mean in (-5.0, 5.0)
+    g2.mean -> m.g1.mean + 0.5
+    g2.stddev ~ Normal(1.0, 0.2)
+    @free g1.stddev
+end
+```
+
+See also: [`@model`](@ref), [`validate`](@ref)
+"""
+:(@constrain)
+
 # ponytail: also catches dotted caller data (`= point.x`) — snapshot to a local first.
 _inject(root, e) =
 if e isa Expr && e.head === :. && e.args[1] isa Symbol && e.args[2] isa QuoteNode

@@ -11,7 +11,12 @@ struct Bounded{T} <: AbstractConstraint
     lower::T
     upper::T
 end
-Bounded(lower, upper) = Bounded(promote(lower, upper)...)
+function Bounded(lower, upper)
+    lo, hi = promote(lower, upper)
+    (isnan(lo) || isnan(hi)) && throw(ArgumentError("Bounded: lower and upper must not be NaN"))
+    lo ≥ hi && throw(ArgumentError("Bounded: requires lower < upper, got lower=$lo, upper=$hi"))
+    Bounded(lo, hi)
+end
 
 # A parameter pinned to a constant — consumes no slot in p.
 struct Fixed{T} <: AbstractConstraint
