@@ -1,12 +1,14 @@
 using Accessors: constructorof
 
-# withparams(cm, p): rebuild the bare model tree from a flat parameter vector.
-# @generated: slot assignment is positional (decision X) and resolved here at compile
-# time by walking the tree *type*; only Fixed values and Tied functions are read from
-# the persistent tree at runtime. Returns the bare tree (Leaf wrappers stripped) so the
-# hot path is the same straight-line rebuild + render as a plain compound model — ADR 0001.
+"""
+    _slotmap!(map, T, counter) -> Dict{Tuple{Symbol,Symbol}, Int}
 
-# Pass 1: give each Free/Bounded field its slot in `p`, keyed by (leaf name, field).
+Walk the tree *type* `T` and assign each [`Free`](@ref) or [`Bounded`](@ref) field a
+positional index in the flat parameter vector `p`. The mapping is keyed by
+`(leaf_name, field_name)` and filled in left-to-right tree order.
+
+This runs at compile time inside the `@generated withparams`.
+"""
 function _slotmap!(map, T, counter)
     if T <: Leaf
         name, M, C = T.parameters
@@ -24,8 +26,17 @@ function _slotmap!(map, T, counter)
     return map
 end
 
-# How one leaf field's value is computed. Uses cached locals (_p1, _p2, …) to
-# avoid redundant bounds-checked reads from the parameter vector.
+"""
+    _fieldexpr(Ci, name, fname, i, acc, slots) -> Expr | Symbol
+
+Return the expression that computes one leaf field's value at runtime, depending on
+its constraint type:
+
+- [`Free`](@ref) / [`Bounded`](@ref): references the pre-loaded local `_pN` for this
+  field's slot in the parameter vector.
+- [`Fixed`](@ref): reads the constant from the persistent tree (`acc.constraints[i].value`).
+- [`Tied`](@ref): calls the tie function with the master parameters' locals as arguments.
+"""
 function _fieldexpr(Ci, name, fname, i, acc, slots)
     return if Ci <: Free || Ci <: Bounded
         Symbol("_p", slots[(name, fname)])
@@ -39,8 +50,21 @@ function _fieldexpr(Ci, name, fname, i, acc, slots)
     end
 end
 
-# Expression that reconstructs one subtree, bare (no Leaf wrapper). `acc` reaches this
-# node in the runtime tree, needed only for Fixed/Tied runtime fields.
+"""
+    _treeexpr(T, acc, slots) -> Expr
+
+Generate the expression that reconstructs one subtree from parameter values.
+
+For a [`Leaf`](@ref), emits a constructor call with each field produced by
+[`_fieldexpr`](@ref). For a compound node, recurses into `.left` and `.right` and
+wraps them in the original compound-node constructor.
+
+The result is a *bare* model tree (Leaf wrappers stripped) so that the hot
+evaluation path is a plain `render` call with no annotation overhead.
+
+`acc` is the expression that reaches this node in the persistent runtime tree;
+it is only needed to read [`Fixed`](@ref) values and [`Tied`](@ref) functions.
+"""
 function _treeexpr(T, acc, slots)
     return if T <: Leaf
         name, M, C = T.parameters
@@ -60,6 +84,37 @@ function _treeexpr(T, acc, slots)
     end
 end
 
+"""
+    withparams(cm::CompiledModel, p) -> AbstractModel
+
+Rebuild the model tree stored in `cm` using parameter values from the flat vector `p`.
+
+Each element of `p` maps to one [`Free`](@ref) or [`Bounded`](@ref) parameter, assigned
+in left-to-right tree order. [`Fixed`](@ref) parameters keep their stored value;
+[`Tied`](@ref) parameters are computed from their master parameters via the stored
+function.
+
+The returned tree is a *bare* model (no [`Leaf`](@ref) wrappers), ready for
+[`render`](@ref). This function is `@generated`: the slot-to-field mapping is resolved
+at compile time from the tree's type, so the runtime cost is a straight-line sequence
+of loads and constructor calls with no dynamic dispatch.
+
+# Arguments
+- `cm::CompiledModel`: compiled model containing the annotated tree and constraints
+- `p`: flat parameter vector of length [`nfree(cm)`](@ref)
+
+# Examples
+```julia
+m = @model begin
+    g = Gaussian1D(amplitude=1.0, mean=0.0, stddev=1.0)
+    g
+end
+bare = withparams(m, [2.0, 0.5, 1.5])   # amplitude=2, mean=0.5, stddev=1.5
+render(bare, 0.0)                         # evaluate at x=0
+```
+
+See also: [`CompiledModel`](@ref), [`params`](@ref), [`nfree`](@ref), [`render`](@ref)
+"""
 @generated function withparams(cm::CompiledModel, p)
     T = cm.parameters[1]
     slots = _slotmap!(Dict{Tuple{Symbol, Symbol}, Int}(), T, Ref(0))

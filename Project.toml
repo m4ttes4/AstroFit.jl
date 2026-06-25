@@ -5,6 +5,7 @@ authors = ["Matteo Sapori <matteosap@hotmail.com>"]
 
 [deps]
 Accessors = "7d9f7c33-5ae7-4f3b-8dc6-eff91059b697"
+DocStringExtensions = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 
 [weakdeps]
@@ -25,6 +26,7 @@ AstroFitPigeonsExt = ["Pigeons", "Distributions"]
 Accessors = "0.1"
 CairoMakie = "0.6, 0.7, 0.8, 0.9, 0.10, 0.11, 0.12, 0.13, 0.14, 0.15"
 Distributions = "0.25"
+DocStringExtensions = "0.9.5"
 ForwardDiff = "1"
 LogDensityProblems = "2"
 Optimization = "5"

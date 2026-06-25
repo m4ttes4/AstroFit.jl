@@ -23,6 +23,7 @@ struct Pipe{L <: AbstractModel, R <: AbstractModel} <: AbstractModel
     right::R
 end
 
+# NOTE if not inlined performance are not good because of tree recursion
 @inline render(m::Sum, x::Number...) = render(m.left, x...) + render(m.right, x...)
 @inline render(m::Difference, x::Number...) = render(m.left, x...) - render(m.right, x...)
 @inline render(m::Product, x::Number...) = render(m.left, x...) * render(m.right, x...)
