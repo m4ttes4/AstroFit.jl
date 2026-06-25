@@ -88,6 +88,7 @@ struct ObjectiveFunction{CM, C, Y, E, S}
     upper::Vector{Float64}
     names::Vector{Symbol}
     statistic::S
+    ndim::Int
     _loglike_const::Float64
 end
 
@@ -107,6 +108,7 @@ function ObjectiveFunction(cm::CompiledModel, x, y, err = nothing; statistic = :
         Float64.(upper),
         paramnames(cm),
         Val(statistic),
+        nfree(cm),
         llc,
     )
 end

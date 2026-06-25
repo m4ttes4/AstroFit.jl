@@ -1,7 +1,7 @@
 module AstroFitLogDensityProblemsExt
 
 using AstroFit
-using LogDensityProblems: LogDensityProblems
+using LogDensityProblems
 
 function _check_posterior_statistic(f::AstroFit.ObjectiveFunction)
     f.statistic === Val(:logposterior) && return nothing
@@ -19,7 +19,7 @@ end
 
 function LogDensityProblems.dimension(f::AstroFit.ObjectiveFunction)
     _check_posterior_statistic(f)
-    return length(f.lower)
+    return f.ndim
 end
 
 LogDensityProblems.capabilities(::Type{<:AstroFit.ObjectiveFunction}) =
