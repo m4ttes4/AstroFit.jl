@@ -13,7 +13,7 @@ _opsym(::Quotient) = "/"
 _opsym(::Pipe) = "|>"
 
 _leafname(::Leaf{n}) where {n} = n
-_fmt(v::AbstractFloat) = string(round(v; sigdigits = 4))
+_fmt(v::AbstractFloat) = string(round(v; sigdigits = 2))
 _fmt(v) = string(v)
 
 # --- compact one-line expression: leaves print as their name, bare components as-is.
@@ -89,7 +89,7 @@ function Base.show(io::IO, ::MIME"text/plain", cm::CompiledModel)
     _header(io, "CompiledModel", _counts(cm))
     print(io, "formula: ")
     println(io, _expr(tree))
-    return _tree(io, tree, "", true, true)
+    return _tree(io, tree, "", true, true, _priormap(getfield(cm, :priors)))
 end
 
 function _stat(io, n, label, color)
@@ -97,25 +97,27 @@ function _stat(io, n, label, color)
     return printstyled(io, label; color, bold = true)
 end
 
-function _tree(io, node, prefix, islast, isroot = false)
+function _tree(io, node, prefix, islast, isroot = false, priors = Dict{Symbol, Any}())
     isroot || print(io, prefix, islast ? "└─ " : "├─ ")
     child = isroot ? prefix : prefix * (islast ? "   " : "│  ")
     return if node isa Leaf
         _leafline(io, node); println(io)
         fields = fieldnames(typeof(node.model))
         isempty(fields) && return
+        lname = _leafname(node)
         width = maximum(length(string(f)) for f in fields)
         for (i, f) in enumerate(fields)
             _fieldline(
                 io, child, i == length(fields), f,
-                getfield(node.model, f), node.constraints[i], width
+                getfield(node.model, f), node.constraints[i], width,
+                get(priors, Symbol(lname, :_, f), nothing)
             )
         end
     else
         printstyled(io, _opsym(node), "\n"; color = :light_black, bold = true)
         kids = _kids(node)
         for (i, k) in enumerate(kids)
-            _tree(io, k, child, i == length(kids))
+            _tree(io, k, child, i == length(kids), false, priors)
         end
     end
 end
@@ -126,11 +128,15 @@ function _leafline(io, l)
     return printstyled(io, nameof(typeof(l.model)); color = :blue)
 end
 
-function _fieldline(io, prefix, islast, f, v, c, width)
+function _fieldline(io, prefix, islast, f, v, c, width, prior = nothing)
     print(io, prefix, islast ? "└─ " : "├─ ")
     print(io, rpad(string(f), width))
     print(io, "  ", rpad(_fieldvalue(v, c), 8), "  ")
     _constraint(io, c)
+    if prior !== nothing
+        printstyled(io, "  ~ "; color = :magenta, bold = true)
+        print(io, _fmtdist(prior))
+    end
     return println(io)
 end
 
@@ -182,9 +188,11 @@ function Base.show(io::IO, ::MIME"text/plain", f::ObjectiveFunction)
     printstyled(io, "free"; color = :green, bold = true)
     println(io, " ($(length(f.names))):")
     isempty(f.names) && return
+    priors = _priormap(getfield(f.cm, :priors))
     width = maximum(length(string(n)) for n in f.names)
     for i in eachindex(f.names)
-        print(io, "  ", rpad(string(f.names[i]), width), "   ")
+        name = f.names[i]
+        print(io, "  ", rpad(string(name), width), "   ")
         lo, hi = f.lower[i], f.upper[i]
         if isfinite(lo) || isfinite(hi)
             printstyled(io, "bounds"; color = :blue, bold = true)
@@ -192,7 +200,22 @@ function Base.show(io::IO, ::MIME"text/plain", f::ObjectiveFunction)
         else
             printstyled(io, "free"; color = :green, bold = true)
         end
+        if haskey(priors, name)
+            printstyled(io, "  ~ "; color = :magenta, bold = true)  # ponytail: not column-aligned
+            print(io, _fmtdist(priors[name]))
+        end
         println(io)
     end
     return nothing
 end
+
+# name -> distribution, from the raw priors tuple (no Distributions dep: dist shows itself)
+_priormap(::Nothing) = Dict{Symbol, Any}()
+_priormap(priors) = Dict(Symbol(l, :_, f) => d for ((l, f), d) in priors)
+
+# dist's own show, minus the {Float64} type param, with floats rounded via _fmt
+_fmtdist(d) = replace(
+    string(d),
+    r"\{.*?\}(?=\()" => "",
+    r"-?\d+\.\d+(?:[eE][-+]?\d+)?" => m -> _fmt(parse(Float64, m)),
+)
