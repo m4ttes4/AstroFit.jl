@@ -6,9 +6,10 @@ using Optimization: AutoForwardDiff
 using ForwardDiff
 
 function OptimizationFunction(
-        cm::AstroFit.CompiledModel, x, y, err = nothing ; adtype = AutoForwardDiff(), kwargs...
+        cm::AstroFit.CompiledModel, x, y, err = nothing;
+        statistic = :chi2, adtype = AutoForwardDiff(), kwargs...
     )
-    f = AstroFit.ObjectiveFunction(cm, x, y, err)
+    f = AstroFit.ObjectiveFunction(cm, x, y, err; statistic)
     return OptimizationFunction(f, adtype; kwargs...)
 end
 
@@ -20,11 +21,9 @@ end
 
 function OptimizationProblem(
         cm::AstroFit.CompiledModel, x, y, err = nothing;
-        adtype = AutoForwardDiff(), kwargs...
+        statistic = :chi2, adtype = AutoForwardDiff(), kwargs...
     )
-    
-
-    optf = AstroFit.ObjectiveFunction(cm, x, y, err)  #OptimizationFunction(cm, x, y, err; adtype)
+    optf = AstroFit.ObjectiveFunction(cm, x, y, err; statistic)
     u0 = params(cm)
     lb, ub = optf.lower, optf.upper
 
