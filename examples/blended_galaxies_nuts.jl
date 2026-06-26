@@ -70,24 +70,24 @@ end
     bulge2.theta -> disk2.theta
 
     # --- bounds ---
-    # bulge1.amplitude in (0.1, 300.0)
-    # bulge1.sigma     in (0.1, 5.0)
-    # bulge1.q         in (0.1, 1.0)
-    # disk1.amplitude  in (0.1, 200.0)
-    # disk1.x0         in (-6.0, 2.0)
-    # disk1.y0         in (-5.0, 3.0)
-    # disk1.r_eff      in (0.3, 8.0)
-    # disk1.q          in (0.1, 1.0)
-    # disk1.theta      in (-1.6, 1.6)
-    # bulge2.amplitude in (0.1, 300.0)
-    # bulge2.sigma     in (0.1, 5.0)
-    # bulge2.q         in (0.1, 1.0)
-    # disk2.amplitude  in (0.1, 200.0)
-    # disk2.x0         in (-1.0, 7.0)
-    # disk2.y0         in (-3.0, 5.0)
-    # disk2.r_eff      in (0.3, 8.0)
-    # disk2.q          in (0.1, 1.0)
-    # disk2.theta      in (-1.6, 1.6)
+    bulge1.amplitude in (0.1, 300.0)
+    bulge1.sigma     in (0.1, 5.0)
+    bulge1.q         in (0.1, 1.0)
+    disk1.amplitude  in (0.1, 200.0)
+    disk1.x0         in (-6.0, 2.0)
+    disk1.y0         in (-5.0, 3.0)
+    disk1.r_eff      in (0.3, 8.0)
+    disk1.q          in (0.1, 1.0)
+    disk1.theta      in (-1.6, 1.6)
+    bulge2.amplitude in (0.1, 300.0)
+    bulge2.sigma     in (0.1, 5.0)
+    bulge2.q         in (0.1, 1.0)
+    disk2.amplitude  in (0.1, 200.0)
+    disk2.x0         in (-1.0, 7.0)
+    disk2.y0         in (-3.0, 5.0)
+    disk2.r_eff      in (0.3, 8.0)
+    disk2.q          in (0.1, 1.0)
+    disk2.theta      in (-1.6, 1.6)
 
     # --- priors ---
     bulge1.amplitude ~ LogNormal(log(50.0), 0.8)
@@ -124,7 +124,7 @@ println("parameter names : ", paramnames(cm))
 # ---------------------------------------------------------------------------
 θ_init    = AstroFit.params(cm)
 n_adapts  = 500
-n_samples = 1_000
+n_samples = 1000
 
 Random.seed!(42)
 chain = AbstractMCMC.sample(
