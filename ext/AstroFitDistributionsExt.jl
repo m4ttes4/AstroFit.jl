@@ -1,9 +1,9 @@
 module AstroFitDistributionsExt
 
 using AstroFit
-using Distributions: logpdf
+using Distributions: logpdf, Uniform
 
-import AstroFit: logprior, setprior, _validate_priors
+import AstroFit: logprior, setprior, _validate_priors, _reference_dists
 
 function setprior(cm::AstroFit.CompiledModel, leaf::Symbol, field::Symbol, dist)
     AstroFit._masterfree(cm, leaf, field) || throw(
@@ -45,5 +45,27 @@ function logprior(cm::AstroFit.CompiledModel, p)
 end
 
 logprior(cm::AstroFit.CompiledModel) = logprior(cm, AstroFit.params(cm))
+
+# Reference distribution per parameter: user prior if set, else Uniform from
+# finite bounds. Throws if a parameter has neither.
+function _reference_dists(cm::AstroFit.CompiledModel, names, lower, upper)
+    priors = getfield(cm, :priors)
+    prior_map = Dict{Symbol, Any}()
+    if priors !== nothing
+        for ((leaf, field), dist) in priors
+            prior_map[Symbol(leaf, :_, field)] = dist
+        end
+    end
+    return map(eachindex(names)) do i
+        name = names[i]
+        haskey(prior_map, name) && return prior_map[name]
+        lo, hi = lower[i], upper[i]
+        isfinite(lo) && isfinite(hi) && return Uniform(lo, hi)
+        throw(ArgumentError(
+            "Parameter `$name` has no prior and no finite bounds. " *
+            "Set a prior with `@constrain` or provide an explicit reference distribution."
+        ))
+    end
+end
 
 end

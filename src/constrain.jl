@@ -33,7 +33,6 @@ function validate(cm::CompiledModel)
     return cm
 end
 
-_validate_priors(::CompiledModel{<:Any, Nothing}) = nothing
 _vnode(n, cm) = (_vnode(n.left, cm); _vnode(n.right, cm); nothing)
 function _vnode(l::Leaf{lname}, cm) where {lname}
     for (i, c) in enumerate(l.constraints)

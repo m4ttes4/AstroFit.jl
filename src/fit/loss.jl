@@ -1,36 +1,3 @@
-function _missing_distributions()
-    throw(
-        ArgumentError(
-            "Bayesian prior evaluation requires Distributions.jl. " *
-                "Load it with `using Distributions` before calling logprior/logposterior."
-        )
-    )
-end
-
-"""
-    setprior(cm::CompiledModel, leaf::Symbol, field::Symbol, dist) -> CompiledModel
-
-Attach a prior distribution `dist` to parameter `leaf.field`. Requires `Distributions.jl`.
-
-See also: [`logprior`](@ref), [`@prior`](@ref)
-"""
-setprior(args...) = _missing_distributions()
-
-"""
-    logprior(cm::CompiledModel, p) -> Float64
-
-Evaluate the sum of log-prior densities at parameter vector `p`. Requires `Distributions.jl`.
-
-See also: [`setprior`](@ref), [`logposterior`](@ref)
-"""
-logprior(args...) = _missing_distributions()
-
-function _logprior(cm::CompiledModel, p)
-    priors = getfield(cm, :priors)
-    (priors === nothing || isempty(priors)) && return 0.0
-    logprior(cm, p)
-end
-
 _coords(x::Tuple) = x
 _coords(x) = (x,)
 
