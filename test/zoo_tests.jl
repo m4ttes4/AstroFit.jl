@@ -48,9 +48,9 @@ end
 
     @test nfree(doublet) == 3
     rebuilt = withparams(doublet, [2.0, 4960.0, 3.0])
-    @test rebuilt.right.amplitude ≈ ratio * 2.0
-    @test rebuilt.right.mean ≈ (red_center / blue_center) * 4960.0
-    @test rebuilt.right.sigma == 3.0
+    @test rebuilt.red.model.amplitude ≈ ratio * 2.0
+    @test rebuilt.red.model.mean ≈ (red_center / blue_center) * 4960.0
+    @test rebuilt.red.model.sigma == 3.0
     @test :red_amplitude ∉ paramnames(doublet)
     @test :red_sigma ∉ paramnames(doublet)
 end

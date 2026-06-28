@@ -93,8 +93,8 @@ end
     @test nfree(cm) == 4
 
     rebuilt = withparams(cm, params(cm))
-    @test rebuilt.left.amplitude == 1.0
-    @test rebuilt.right.mean == rebuilt.left.mean
+    @test rebuilt.narrow.model.amplitude == 1.0
+    @test rebuilt.broad.model.mean == rebuilt.narrow.model.mean
 end
 
 @testitem "@constrain block supports fix-current and @free" tags = [:authoring] begin
@@ -143,7 +143,7 @@ end
 
     @tie cm.b.mean -> cm.a.mean
     @test cm.b.constraints[2] isa Tied
-    @test withparams(cm, params(cm)).right.mean == withparams(cm, params(cm)).left.mean
+    @test withparams(cm, params(cm)).b.model.mean == withparams(cm, params(cm)).a.model.mean
 end
 
 @testitem "setconstraint is the low-level edit API" tags = [:authoring] begin

@@ -24,9 +24,9 @@
     @test upper == [Inf, Inf, Inf, Inf, 10.0]
 
     rebuilt = withparams(cm, params(cm))
-    @test rebuilt.left.amplitude == 2.0
-    @test rebuilt.left.mean == 0.0
-    @test rebuilt.right.sigma == 1.5
+    @test rebuilt.left.model.amplitude == 2.0
+    @test rebuilt.left.model.mean == 0.0
+    @test rebuilt.right.model.sigma == 1.5
 end
 
 @testitem "bounds excludes fixed and tied slots" tags = [:core, :params, :tied] begin
@@ -70,9 +70,9 @@ end
     @test params(cm) == [0.0]
 
     rebuilt = withparams(cm, [2.0])
-    @test rebuilt.amplitude == 5.0
-    @test rebuilt.mean == 2.0
-    @test rebuilt.sigma == 1.0
+    @test rebuilt.line.model.amplitude == 5.0
+    @test rebuilt.line.model.mean == 2.0
+    @test rebuilt.line.model.sigma == 1.0
 end
 
 @testitem "ties are resolved by withparams" tags = [:core, :tied] begin
@@ -91,8 +91,8 @@ end
 
     @test nfree(cm) == 4
     m = withparams(cm, [2.0, 3.0, 4.0, 0.0])
-    @test m.right.amplitude == 6.0
-    @test m.right.sigma == 4.0
+    @test m.right.model.amplitude == 6.0
+    @test m.right.model.sigma == 4.0
 end
 
 @testitem "validate rejects ties to non-free masters" tags = [:core, :tied] begin

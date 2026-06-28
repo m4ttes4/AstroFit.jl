@@ -59,11 +59,13 @@ For a [`Leaf`](@ref), emits a constructor call with each field produced by
 [`_fieldexpr`](@ref). For a compound node, recurses into `.left` and `.right` and
 wraps them in the original compound-node constructor.
 
-The result is a *bare* model tree (Leaf wrappers stripped) so that the hot
-evaluation path is a plain `render` call with no annotation overhead.
+The result is an *annotated* tree: each [`Leaf`](@ref) is rebuilt with the new
+model values while its `constraints` tuple is carried over unchanged from the
+persistent tree, so the rebuilt tree stays navigable and re-fittable.
 
 `acc` is the expression that reaches this node in the persistent runtime tree;
-it is only needed to read [`Fixed`](@ref) values and [`Tied`](@ref) functions.
+it is needed to read [`Fixed`](@ref) values, [`Tied`](@ref) functions, and the
+leaf `constraints` carried into the rebuilt tree.
 """
 function _treeexpr(T, acc, slots)
     return if T <: Leaf
@@ -72,7 +74,7 @@ function _treeexpr(T, acc, slots)
             _fieldexpr(fieldtypes(C)[i], name, fieldnames(M)[i], i, acc, slots)
                 for i in 1:fieldcount(M)
         )
-        :($(constructorof(M))($(fields...)))
+        :(Leaf{$(QuoteNode(name))}($(constructorof(M))($(fields...)), ($acc).constraints))
     else
         L, R = T.parameters
         :(
@@ -85,7 +87,7 @@ function _treeexpr(T, acc, slots)
 end
 
 """
-    withparams(cm::CompiledModel, p) -> AbstractModel
+    withparams(cm::CompiledModel, p) -> CompiledModel
 
 Rebuild the model tree stored in `cm` using parameter values from the flat vector `p`.
 
@@ -94,10 +96,11 @@ in left-to-right tree order. [`Fixed`](@ref) parameters keep their stored value;
 [`Tied`](@ref) parameters are computed from their master parameters via the stored
 function.
 
-The returned tree is a *bare* model (no [`Leaf`](@ref) wrappers), ready for
-[`render`](@ref). This function is `@generated`: the slot-to-field mapping is resolved
-at compile time from the tree's type, so the runtime cost is a straight-line sequence
-of loads and constructor calls with no dynamic dispatch.
+The result is a new [`CompiledModel`](@ref) wrapping the rebuilt annotated tree
+(constraints and priors carried over from `cm`), so it is navigable (`result.leaf`),
+renderable and re-fittable just like `cm`. This function is `@generated`: the
+slot-to-field mapping is resolved at compile time from the tree's type, so the runtime
+cost is a straight-line sequence of loads and constructor calls with no dynamic dispatch.
 
 # Arguments
 - `cm::CompiledModel`: compiled model containing the annotated tree and constraints
@@ -109,8 +112,9 @@ m = @model begin
     g = Gaussian1D(amplitude=1.0, mean=0.0, stddev=1.0)
     g
 end
-bare = withparams(m, [2.0, 0.5, 1.5])   # amplitude=2, mean=0.5, stddev=1.5
-render(bare, 0.0)                         # evaluate at x=0
+fit = withparams(m, [2.0, 0.5, 1.5])    # amplitude=2, mean=0.5, stddev=1.5
+render(fit, 0.0)                          # evaluate at x=0
+fit.g.model.amplitude                     # navigable: 2.0
 ```
 
 See also: [`CompiledModel`](@ref), [`params`](@ref), [`nfree`](@ref), [`render`](@ref)
@@ -121,5 +125,5 @@ See also: [`CompiledModel`](@ref), [`params`](@ref), [`nfree`](@ref), [`render`]
     nslots = length(slots)
     loads = [:($(Symbol("_p", i)) = @inbounds p[$i]) for i in 1:nslots]
     tree = _treeexpr(T, :(getfield(cm, :tree)), slots)
-    return Expr(:block, loads..., tree)
+    return Expr(:block, loads..., :(CompiledModel($tree, getfield(cm, :priors))))
 end
