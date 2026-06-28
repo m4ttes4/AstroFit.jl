@@ -109,10 +109,10 @@ cost is a straight-line sequence of loads and constructor calls with no dynamic 
 # Examples
 ```julia
 m = @model begin
-    g = Gaussian1D(amplitude=1.0, mean=0.0, stddev=1.0)
+    g = Gaussian1D(amplitude=1.0, mean=0.0, sigma=1.0)
     g
 end
-fit = withparams(m, [2.0, 0.5, 1.5])    # amplitude=2, mean=0.5, stddev=1.5
+fit = withparams(m, [2.0, 0.5, 1.5])    # amplitude=2, mean=0.5, sigma=1.5
 render(fit, 0.0)                          # evaluate at x=0
 fit.g.model.amplitude                     # navigable: 2.0
 ```

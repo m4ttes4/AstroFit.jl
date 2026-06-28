@@ -120,6 +120,27 @@ end
     @test cm.line.constraints[3].value == 1.0
 end
 
+@testitem "@constrain value positions read caller data, not leaf paths" tags = [:authoring] begin
+    using AstroFit
+
+    cm = @model begin
+        line = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.0)
+        line
+    end
+
+    cfg = (factor = 2.5, lo = -3.0, hi = 4.0)
+    @constrain cm begin
+        line.amplitude = cfg.factor
+        line.mean in (cfg.lo, cfg.hi)
+    end
+
+    @test cm.line.constraints[1] isa Fixed
+    @test cm.line.constraints[1].value == 2.5
+    @test cm.line.constraints[2] isa Bounded
+    @test cm.line.constraints[2].lower == -3.0
+    @test cm.line.constraints[2].upper == 4.0
+end
+
 @testitem "standalone macros auto-rebind" tags = [:authoring] begin
     using AstroFit
 

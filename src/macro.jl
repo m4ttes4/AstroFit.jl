@@ -16,8 +16,8 @@ operators (`+`, `*`, `|`) build the tree. Constraints are set afterwards via
 # Examples
 ```julia
 m = @model begin
-    g1 = Gaussian1D(amplitude=1.0, mean=0.0, stddev=1.0)
-    g2 = Gaussian1D(amplitude=0.5, mean=3.0, stddev=0.8)
+    g1 = Gaussian1D(amplitude=1.0, mean=0.0, sigma=1.0)
+    g2 = Gaussian1D(amplitude=0.5, mean=3.0, sigma=0.8)
     g1 + g2
 end
 ```
@@ -160,7 +160,7 @@ expression and consumes no free-parameter slot.
 # Examples
 ```julia
 @tie m.g2.mean -> m.g1.mean + 0.5
-@tie m.g2.stddev -> 2 * m.g1.stddev
+@tie m.g2.sigma -> 2 * m.g1.sigma
 ```
 
 See also: [`Tied`](@ref), [`@fix`](@ref), [`@constrain`](@ref)
@@ -265,9 +265,9 @@ automatically rebound after validation.
 @constrain m begin
     g1.amplitude = 1.0
     g1.mean in (-5.0, 5.0)
-    g2.mean -> m.g1.mean + 0.5
-    g2.stddev ~ Normal(1.0, 0.2)
-    @free g1.stddev
+    g2.mean -> g1.mean + 0.5
+    g2.sigma ~ Normal(1.0, 0.2)
+    @free g1.sigma
 end
 ```
 
@@ -289,18 +289,21 @@ macro constrain(cm, blk)
     blk isa Expr && blk.head === :block || error("@constrain expects a begin…end block")
     cm isa Symbol || error("@constrain: first argument must be a variable name")
     g = gensym(:cm); seen = Set{Tuple{Symbol, Symbol}}()
+    # Inject the model gensym only into *path* positions (`leaf.field` → `g.leaf.field`).
+    # Value positions (rhs of `=`, the `(lo, hi)` tuple, the prior dist) stay untouched —
+    # injecting them would mangle caller data like `= cfg.factor` into `g.cfg.factor`.
+    splitp(e) = _splitpath(_inject(g, e))
     out = Any[:($g = $(esc(cm)))]
     for s in blk.args
         s isa LineNumberNode && continue
-        s = _inject(g, s)
 
         if s isa Expr && s.head === :.
-            (_, l, f) = _splitpath(s)
+            (_, l, f) = splitp(s)
             _checkdup!(seen, l, f)
             push!(out, :($g = $(_setexpr(g, l, f, _fixcurrent(g, l, f)))))
 
         elseif s isa Expr && s.head === :(=)
-            (_, l, f) = _splitpath(s.args[1])
+            (_, l, f) = splitp(s.args[1])
             _checkdup!(seen, l, f)
             push!(out, :($g = $(_setexpr(g, l, f, :(Fixed($(esc(s.args[2]))))))))
 
@@ -308,8 +311,8 @@ macro constrain(cm, blk)
             lhs = s.args[1]
             rhs_block = s.args[2]
             rhs = rhs_block isa Expr && rhs_block.head === :block ? rhs_block.args[end] : rhs_block
-            (_, l, f) = _splitpath(lhs)
-            (pe, lam) = _tiewalk(rhs, g)
+            (_, l, f) = splitp(lhs)
+            (pe, lam) = _tiewalk(_inject(g, rhs), g)
             _checkdup!(seen, l, f)
             push!(out, :($g = $(_setexpr(g, l, f, :(Tied($pe, $(esc(lam))))))))
 
@@ -317,19 +320,19 @@ macro constrain(cm, blk)
             tup = s.args[3]
             tup isa Expr && tup.head === :tuple && length(tup.args) == 2 ||
                 error("@constrain: `in` expects `path in (lo, hi)`")
-            (_, l, f) = _splitpath(s.args[2])
+            (_, l, f) = splitp(s.args[2])
             lo, hi = tup.args
             _checkdup!(seen, l, f)
             push!(out, :($g = $(_setexpr(g, l, f, :(Bounded($(esc(lo)), $(esc(hi))))))))
 
         elseif s isa Expr && s.head === :call && length(s.args) == 3 && s.args[1] === :~
-            (_, l, f) = _splitpath(s.args[2])
+            (_, l, f) = splitp(s.args[2])
             push!(out, :($g = setprior($g, $(QuoteNode(l)), $(QuoteNode(f)), $(esc(s.args[3])))))
 
         elseif s isa Expr && s.head === :macrocall && s.args[1] === Symbol("@free")
             fargs = [x for x in s.args[3:end] if !(x isa LineNumberNode)]
             length(fargs) == 1 || error("@free expects one path")
-            (_, l, f) = _splitpath(fargs[1])
+            (_, l, f) = splitp(fargs[1])
             _checkdup!(seen, l, f)
             push!(out, :($g = $(_setexpr(g, l, f, :(Free())))))
 
