@@ -257,8 +257,8 @@ println("\nsampling with Pigeons...")
 pt = pigeons(
     target = target,
     n_rounds = 8,
-    n_chains = 4,
-    seed = 123,
+    n_chains = 2,
+    # seed = 123,
     record = [traces; record_default()],
 )
 

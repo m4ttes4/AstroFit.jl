@@ -60,7 +60,7 @@ pt = pigeons(
     target = target,
     n_rounds = 10,
     n_chains = 8,
-    seed = 123,
+    # seed = 123,
     record = [traces; record_default()],
 )
 

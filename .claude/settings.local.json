@@ -7,5 +7,7 @@
       "Bash(rtk ls *)",
       "Bash(rtk read *)"
     ]
-  }
+  },
+  "prefersReducedMotion": false,
+  "outputStyle": "Explanatory"
 }
