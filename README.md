@@ -1,5 +1,6 @@
 [![code style: runic](https://img.shields.io/badge/code_style-%E1%9A%B1%E1%9A%A2%E1%9A%BE%E1%9B%81%E1%9A%B2-black)](https://github.com/fredrikekre/Runic.jl)
 [![Aqua QA](https://juliatesting.github.io/Aqua.jl/dev/assets/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
+[![codecov](https://codecov.io/gh/m4ttes4/AstroFit.jl/graph/badge.svg?token=75C3VYYJJI)](https://codecov.io/gh/m4ttes4/AstroFit.jl)
 
 # AstroFit
 
