@@ -174,3 +174,55 @@ end
     probe(cm, pd)
     @test @allocated(probe(cm, pd)) == 0
 end
+
+@testitem "withparams keyword method overrides by name" tags = [:core, :params] begin
+    using AstroFit
+
+    cm = @model begin
+        left = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.0)
+        right = Gaussian1D(amplitude = 3.0, mean = 5.0, sigma = 1.5)
+        left + right
+    end
+
+    # partial override: untouched parameters keep current values
+    m = withparams(cm; left_amplitude = 7.0, right_mean = 4.0)
+    @test m.left.model.amplitude == 7.0
+    @test m.right.model.mean == 4.0
+    @test m.left.model.sigma == 1.0
+    @test m.right.model.amplitude == 3.0
+
+    # no kwargs: identity on values
+    @test params(withparams(cm)) == params(cm)
+
+    # result is a CompiledModel: renderable and re-usable
+    @test render(m, 0.0) == render(withparams(cm, [7.0, 0.0, 1.0, 3.0, 4.0, 1.5]), 0.0)
+
+    # unknown name throws with the available names listed
+    @test_throws ArgumentError withparams(cm; bogus = 1.0)
+    err = try; withparams(cm; bogus = 1.0); catch e; e; end
+    @test occursin("left_amplitude", err.msg)
+end
+
+@testitem "withparams keyword method rejects fixed and tied parameters" tags = [:core, :params, :tied] begin
+    using AstroFit
+
+    cm = @model begin
+        left = Gaussian1D(amplitude = 2.0, sigma = 1.0)
+        right = Gaussian1D(amplitude = 3.0, sigma = 1.5)
+        left + right
+    end
+
+    @constrain cm begin
+        left.sigma = 1.0
+        right.amplitude -> 2 * left.amplitude
+    end
+
+    @test_throws ArgumentError withparams(cm; left_sigma = 2.0)
+    @test_throws ArgumentError withparams(cm; right_amplitude = 9.0)
+
+    # free parameters still settable; tie recomputed from the new master
+    m = withparams(cm; left_amplitude = 5.0)
+    @test m.left.model.amplitude == 5.0
+    @test m.right.model.amplitude == 10.0
+    @test m.left.model.sigma == 1.0
+end

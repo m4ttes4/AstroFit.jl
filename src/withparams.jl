@@ -127,3 +127,56 @@ See also: [`CompiledModel`](@ref), [`params`](@ref), [`nfree`](@ref), [`render`]
     tree = _treeexpr(T, :(getfield(cm, :tree)), slots)
     return Expr(:block, loads..., :(CompiledModel($tree, getfield(cm, :priors))))
 end
+
+"""
+    withparams(cm::CompiledModel; kwargs...) -> CompiledModel
+
+Rebuild the model tree stored in `cm`, overriding selected free parameters by name.
+
+Each keyword must match an entry of [`paramnames(cm)`](@ref), i.e. take the form
+`<leaf>_<field>` (e.g. `g_amplitude` for field `amplitude` of leaf `g`). Parameters not
+mentioned keep their current value. This is a convenience front-end for interactive use —
+tweak a couple of parameters and re-render without building the full parameter vector:
+
+```julia
+render(withparams(m; g_mean = 0.5), x)
+```
+
+Internally the keywords are written into a copy of [`params(cm)`](@ref) and forwarded to
+the positional `withparams(cm, p)`, so the two methods are always consistent. Prefer the
+positional method in hot loops (optimizers, samplers): this one allocates the parameter
+vector and resolves names at runtime.
+
+Only [`Free`](@ref) and [`Bounded`](@ref) parameters can be set this way. Naming a
+[`Fixed`](@ref) or [`Tied`](@ref) parameter (or a nonexistent one) throws an
+`ArgumentError` listing the available names; changing a fixed value is a constraint
+edit — use [`@constrain`](@ref) instead.
+
+# Arguments
+- `cm::CompiledModel`: compiled model containing the annotated tree and constraints
+- `kwargs...`: free-parameter overrides keyed by `<leaf>_<field>` name
+
+# Examples
+```julia
+m = @model begin
+    g = Gaussian1D(amplitude=1.0, mean=0.0, sigma=1.0)
+    g
+end
+tall = withparams(m; g_amplitude = 5.0)   # mean, sigma keep current values
+tall.g.model.amplitude                    # 5.0
+tall.g.model.sigma                        # 1.0
+```
+
+See also: [`withparams(cm, p)`](@ref withparams), [`params`](@ref), [`paramnames`](@ref)
+"""
+function withparams(cm::CompiledModel; kwargs...)
+    p = params(cm)
+    names = paramnames(cm)
+    for (k, v) in kwargs
+        i = findfirst(==(k), names)
+        i === nothing && throw(ArgumentError(
+            "withparams: no free parameter `$k` — available: $(join(names, ", "))"))
+        p[i] = v
+    end
+    return withparams(cm, p)
+end
