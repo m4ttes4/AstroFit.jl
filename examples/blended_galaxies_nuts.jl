@@ -113,7 +113,7 @@ end
 # ---------------------------------------------------------------------------
 # 4. Log-posterior target + AD gradient wrapper
 # ---------------------------------------------------------------------------
-target = ObjectiveFunction(cm, (X, Y), img_data, err; statistic = :logposterior)
+target = ObjectiveFunction(cm, (X, Y), img_data, err; statistic = logposterior)
 ℓ = ADgradient(:ForwardDiff, target)
 
 println("free parameters : ", nfree(cm))

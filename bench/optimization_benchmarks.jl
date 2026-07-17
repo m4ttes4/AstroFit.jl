@@ -139,7 +139,7 @@ function bench_opt(label, con_cm, x, hand_render, hand_chi2; bench_solve = true)
     err = ones(length(x))
 
     af_render(p) = render(withparams(con_cm, p), x)
-    f = ObjectiveFunction(con_cm, x, y, err)    # statistic = :chi2
+    f = ObjectiveFunction(con_cm, x, y, err)    # statistic = chi2
     hand(p) = hand_chi2(p, x, y, err)
 
     y_af = af_render(p0)

@@ -248,7 +248,7 @@ flux = flux_true .+ err .* randn(length(lambda))
 # ---------------------------------------------------------------------------
 # Pigeons sampling
 # ---------------------------------------------------------------------------
-target = ObjectiveFunction(cm, lambda, flux, err; statistic = :logposterior)
+target = ObjectiveFunction(cm, lambda, flux, err; statistic = logposterior)
 
 println("free parameters : ", nfree(cm))
 println("parameter names : ", paramnames(cm))

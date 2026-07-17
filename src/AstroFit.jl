@@ -23,6 +23,7 @@ export AbstractConstraint, Free, Fixed, Bounded, Tied
 export CompiledModel, withparams, params, nfree, bounds, paramnames
 export setconstraint, validate
 export logprior, setprior, ObjectiveFunction, chi2, loglikelihood, logposterior
+export negloglikelihood, neglogposterior
 export @model, @fix, @bound, @free, @tie, @prior, @constrain
 export render, render!
 export emission_line, absorption_line, doublet, powerlaw_continuum, blackbody_continuum

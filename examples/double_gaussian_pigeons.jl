@@ -55,7 +55,7 @@ end
 # ---------------------------------------------------------------------------
 # 4. Sample the posterior with Pigeons
 # ---------------------------------------------------------------------------
-target = ObjectiveFunction(cm, x, y, err; statistic = :logposterior)
+target = ObjectiveFunction(cm, x, y, err; statistic = logposterior)
 pt = pigeons(
     target = target,
     n_rounds = 10,

@@ -74,7 +74,7 @@ function _treeexpr(T, acc, slots)
             _fieldexpr(fieldtypes(C)[i], name, fieldnames(M)[i], i, acc, slots)
                 for i in 1:fieldcount(M)
         )
-        :(Leaf{$(QuoteNode(name))}($(constructorof(M))($(fields...)), ($acc).constraints))
+        :(Leaf{$(QuoteNode(name))}($(constructorof(M))(promote($(fields...))...), ($acc).constraints))
     else
         L, R = T.parameters
         :(

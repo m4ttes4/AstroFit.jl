@@ -131,6 +131,51 @@ end
     @test f(u .+ 0.1) > 0.0
 end
 
+@testitem "ObjectiveFunction: statistic is a callable" tags = [:bayes] begin
+    using AstroFit
+
+    cm = @model begin
+        g = Gaussian1D(amplitude = 1.0, mean = 0.0, sigma = 1.0)
+        g
+    end
+    x = collect(-2.0:0.5:2.0)
+    y = render(cm, x)
+    u = params(cm)
+
+    f = ObjectiveFunction(cm, x, y; statistic = logposterior)
+    @test f(u) == logposterior(f, u)
+
+    doublechi2(f, p) = 2 * chi2(f, p)
+    fc = ObjectiveFunction(cm, x, y; statistic = doublechi2)
+    @test fc(u) == 2 * chi2(fc, u)
+end
+
+@testitem "ObjectiveFunction: Bayesian extensions ignore statistic" tags = [:bayes] begin
+    using AstroFit, LogDensityProblems, Pigeons, Random
+
+    cm = @model begin
+        g = Gaussian1D(amplitude = 1.0, mean = 0.0, sigma = 1.0)
+        g
+    end
+    @bound cm.g.amplitude in (0, 10)
+    @bound cm.g.mean in (-5, 5)
+    @bound cm.g.sigma in (0.1, 10)
+    x = collect(-2.0:0.5:2.0)
+    y = render(cm, x)
+    u = params(cm)
+
+    f = ObjectiveFunction(cm, x, y) # default statistic = chi2
+    @test LogDensityProblems.logdensity(f, u) == logposterior(f, u)
+    @test LogDensityProblems.dimension(f) == f.ndim
+
+    @test_throws ArgumentError Pigeons.initialization(f, Random.default_rng(), 1)
+    @test_throws ArgumentError Pigeons.default_reference(f)
+
+    fp = ObjectiveFunction(cm, x, y; statistic = logposterior)
+    @test Pigeons.initialization(fp, Random.default_rng(), 1) isa Vector{Float64}
+    @test Pigeons.default_reference(fp) isa Pigeons.DistributionLogPotential
+end
+
 @testitem "ObjectiveFunction: data validation" tags = [:bayes] begin
     using AstroFit
 
