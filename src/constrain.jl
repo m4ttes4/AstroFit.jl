@@ -1,4 +1,4 @@
-using Accessors: constructorof
+using ConstructionBase: constructorof
 
 # Constraint-application engine (design X). setconstraint is the write-analog of _nav:
 # navigation *finds* a leaf, but the tree is immutable, so editing rebuilds root→leaf.

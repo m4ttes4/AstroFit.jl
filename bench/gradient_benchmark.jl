@@ -121,7 +121,7 @@ y_true = render(withparams(cm, p0), x)
 err = fill(0.3, length(x))
 y = y_true .+ 0.3 .* randn(length(x))
 
-af_obj   = ObjectiveFunction(cm, x, y, err; statistic = :chi2)
+af_obj   = ObjectiveFunction(cm, x, y, err; statistic = chi2)
 mono(p)  = monolithic_chi2(p, x, y, err)
 split(p) = split_chi2(p, x, y, err)
 nofm(p)  = nofm_chi2(p, x, y, err)

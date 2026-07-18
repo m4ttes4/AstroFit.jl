@@ -94,7 +94,7 @@ af_y = render(withparams(cm, p0), x)
 hand_y = hand_render.(Ref(p0), x)
 @assert af_y ≈ hand_y "render mismatch"
 
-af_obj = ObjectiveFunction(cm, x, y, err; statistic = :chi2)
+af_obj = ObjectiveFunction(cm, x, y, err; statistic = chi2)
 @assert af_obj(p0) ≈ hand_chi2(p0, x, y, err) "chi2 mismatch"
 println("model: Hα + [NII], $(nfree(cm)) free params, $(length(x)) data points")
 println("equivalence: ok\n")
@@ -170,7 +170,7 @@ p_start = [0.0, 0.5, 5.0, 6560.0, 5.0]
 lb, ub = AstroFit.bounds(cm)
 
 function run_af_optim(p_start)
-    obj = ObjectiveFunction(cm, x, y, err; statistic = :chi2)
+    obj = ObjectiveFunction(cm, x, y, err; statistic = chi2)
     optf = OptimizationFunction(obj, Optimization.AutoForwardDiff())
     prob = OptimizationProblem(optf, p_start; lb, ub)
     return solve(prob, LBFGS())

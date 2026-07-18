@@ -139,7 +139,7 @@ end
 # 4. Verify equivalence
 # ---------------------------------------------------------------------------
 p0 = AstroFit.params(cm)
-af_target = ObjectiveFunction(cm, x, y, err; statistic = :logposterior)
+af_target = ObjectiveFunction(cm, x, y, err; statistic = logposterior)
 hand = HandTarget(x, y, err)
 
 @assert af_target(p0) ≈ hand(p0) "AstroFit vs handwritten log-posterior diverge: $(af_target(p0)) vs $(hand(p0))"

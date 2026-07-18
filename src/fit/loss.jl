@@ -1,5 +1,8 @@
+
 _coords(x::Tuple) = x
 _coords(x) = (x,)
+
+
 
 """
     chi2(model, coords, y, err)
@@ -78,12 +81,12 @@ function check_data(x, y, err)
 end
 
 """
-    ObjectiveFunction(cm::CompiledModel, x, y, [err]; statistic=:chi2)
+    ObjectiveFunction(cm::CompiledModel, x, y, [err]; statistic=chi2)
 
 Callable objective wrapping a [`CompiledModel`](@ref), data, and optional errors.
 
-Calling `f(p)` evaluates the chosen statistic at parameter vector `p`.
-Supports `f(p, _)` for the two-argument convention used by Optimization.jl.
+Calling `f(p)` calls `statistic(f, p)`. Supports `f(p, _)` for the two-argument
+convention used by Optimization.jl.
 
 # Arguments
 - `cm::CompiledModel`: the compiled model to evaluate
@@ -92,15 +95,26 @@ Supports `f(p, _)` for the two-argument convention used by Optimization.jl.
 - `err`: optional per-point errors (standard deviations)
 
 # Keywords
-- `statistic::Symbol=:chi2`: objective to compute. One of `:chi2`,
-  `:negloglikelihood`, `:logposterior`, `:neglogposterior`
+- `statistic`: callable with signature `(f::ObjectiveFunction, p) -> Float64`,
+  called as `f(p)`. Default [`chi2`](@ref). [`loglikelihood`](@ref),
+  [`logposterior`](@ref), [`negloglikelihood`](@ref), [`neglogposterior`](@ref)
+  already have this shape and can be passed directly; any user function or
+  closure with the same signature works too.
 
 # Examples
 ```julia
 f = ObjectiveFunction(cm, x, y, err)
 f(p)                     # χ² at parameter vector p
-f = ObjectiveFunction(cm, x, y; statistic=:neglogposterior)
+f = ObjectiveFunction(cm, x, y, err; statistic=neglogposterior)
 f(p)                     # -log posterior at p
+
+# custom likelihood, e.g. Poisson counts
+poisson_ll(f, p) = begin
+    m = withparams(f.cm, p)
+    sum(i -> logpdf(Poisson(render(m, f.coords[1][i])), f.y[i]), eachindex(f.y))
+end
+f = ObjectiveFunction(cm, x, y; statistic=poisson_ll)
+f(p)                     # poisson_ll(f, p)
 ```
 
 See also: [`chi2`](@ref), [`loglikelihood`](@ref), [`logposterior`](@ref)
@@ -118,7 +132,7 @@ struct ObjectiveFunction{CM, C, Y, E, S}
     _loglike_const::Float64
 end
 
-function ObjectiveFunction(cm::CompiledModel, x, y, err = nothing; statistic = :chi2)
+function ObjectiveFunction(cm::CompiledModel, x, y, err = nothing; statistic = chi2)
     check_data(x, y, err)
     lower, upper = bounds(cm)
     n = length(y)
@@ -133,20 +147,14 @@ function ObjectiveFunction(cm::CompiledModel, x, y, err = nothing; statistic = :
         Float64.(lower),
         Float64.(upper),
         paramnames(cm),
-        Val(statistic),
+        statistic,
         nfree(cm),
         llc,
     )
 end
 
-(f::ObjectiveFunction)(p) = _evaluate(f.statistic, f, p)
+(f::ObjectiveFunction)(p) = f.statistic(f, p)
 (f::ObjectiveFunction)(p, _) = f(p) # Optimization.jl convention
-
-_evaluate(::Val{:chi2}, f, p) = chi2(f, p)
-_evaluate(::Val{:negloglikelihood}, f, p) = -loglikelihood(f, p)
-_evaluate(::Val{:logposterior}, f, p) = logposterior(f, p)
-_evaluate(::Val{:neglogposterior}, f, p) = -logposterior(f, p)
-_evaluate(::Val{S}, _, _) where {S} = throw(ArgumentError("unknown statistic: $S"))
 
 @inline chi2(f::ObjectiveFunction, p) = chi2(withparams(f.cm, p), f.coords, f.y, f.err)
 
@@ -157,7 +165,14 @@ Compute the Gaussian log-likelihood at parameter vector `p`: `-0.5 * χ² + cons
 
 See also: [`chi2`](@ref), [`logposterior`](@ref)
 """
-loglikelihood(f::ObjectiveFunction, p) = -0.5 * chi2(f, p) + f._loglike_const
+@inline loglikelihood(f::ObjectiveFunction, p) = -0.5 * chi2(f, p) + f._loglike_const
+
+"""
+    negloglikelihood(f::ObjectiveFunction, p) -> Float64
+
+`-loglikelihood(f, p)`. Convenience for use as `statistic`.
+"""
+negloglikelihood(f::ObjectiveFunction, p) = -loglikelihood(f, p)
 
 function _inside_bounds(f::ObjectiveFunction, p)
     for i in eachindex(p)
@@ -179,3 +194,10 @@ function logposterior(f::ObjectiveFunction, p)
     _inside_bounds(f, p) || return -Inf
     return _logprior(f.cm, p) + loglikelihood(f, p)
 end
+
+"""
+    neglogposterior(f::ObjectiveFunction, p) -> Float64
+
+`-logposterior(f, p)`. Convenience for use as `statistic`.
+"""
+neglogposterior(f::ObjectiveFunction, p) = -logposterior(f, p)

@@ -169,7 +169,7 @@ end
 # ---------------------------------------------------------------------------
 # :neglogposterior so the prior above actually regularizes the fit (MAP estimate);
 # without this the χ² objective would ignore the prior entirely.
-prob = OptimizationProblem(cm, (X, Y), img_data, err; statistic = :neglogposterior)
+prob = OptimizationProblem(cm, (X, Y), img_data, err; statistic = neglogposterior)
 sol = solve(prob, Fminbox(LBFGS()))
 fit = withparams(cm, sol.u)
 

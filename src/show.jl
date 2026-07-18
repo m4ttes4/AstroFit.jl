@@ -162,11 +162,7 @@ _masters(::Tied{P}) where {P} = join(("$l.$f" for (l, f) in P), ", ")
 # --- ObjectiveFunction summary: header (statistic · pts · weighting) + formula +
 # the free-slot list with per-slot bounds. Reuses _expr/_fmt; names/lower/upper share
 # the same DFS free-slot order (params.jl), so they index together.
-_statlabel(::Val{:chi2}) = "χ²"
-_statlabel(::Val{:negloglikelihood}) = "−loglike"
-_statlabel(::Val{:logposterior}) = "logposterior"
-_statlabel(::Val{:neglogposterior}) = "−logpost"
-_statlabel(::Val{S}) where {S} = string(S)
+_statlabel(stat) = (n = string(nameof(stat)); startswith(n, "#") ? "custom" : n)
 
 function Base.show(io::IO, f::ObjectiveFunction)
     w = f.err === nothing ? "" : "weighted, "

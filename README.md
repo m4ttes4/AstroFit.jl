@@ -377,6 +377,31 @@ For Bayesian sampling, use a log-density statistic:
 obj_bayes = ObjectiveFunction(spec, λ, y, err; statistic = :neglogposterior)
 ```
 
+### Statistics as functions
+
+Each statistic is also a plain function `(f::ObjectiveFunction, p) -> Real`, so
+you are not limited to the one picked by `statistic`. All of them are exported:
+`chi2`, `loglikelihood`, `negloglikelihood`, `logposterior`, `neglogposterior`.
+
+```julia
+chi2(obj, params(spec))              # regardless of obj's configured statistic
+loglikelihood(obj_bayes, params(spec))
+```
+
+This is the same shape a custom statistic needs, so writing your own (e.g.
+Poisson counts instead of Gaussian errors) is just another function with this
+signature:
+
+```julia
+function poisson_ll(f::ObjectiveFunction, p)
+    model = withparams(f.cm, p)
+    counts = render(model, f.coords[1])
+    sum(logpdf.(Poisson.(counts), f.y))
+end
+
+obj = ObjectiveFunction(spec, λ, y; statistic = poisson_ll)
+```
+
 ### Manual loss function
 
 If you need a custom objective (e.g. Cash statistic, regularisation), build it
