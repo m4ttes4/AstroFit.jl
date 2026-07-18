@@ -11,11 +11,13 @@ using Optimization, OptimizationOptimJL, ForwardDiff
 using CairoMakie
 using Random
 
+const L_HEII = 4685.68
 const L_HB = 4861.33
 const L_OIII_B = 4958.91
 const L_OIII_R = 5006.84
 const L_NAD_D2 = 5889.95
 const L_NAD_D1 = 5895.92
+const L_HEI = 5875.62
 const L_HA = 6562.8
 const L_NII_B = 6548.05
 const L_NII_R = 6583.45
@@ -29,23 +31,30 @@ end
 
 AstroFit.render(m::RedshiftAxis1D, lambda::Number) = lambda / (1 + m.z)
 
-Base.@kwdef struct RedshiftFluxScale1D{T <: Real} <: AbstractModel
-    z::T = 0.0
+Base.@kwdef struct DustScreen1D{T <: Real} <: AbstractModel
+    a_v::T = 0.0
+    lambda_ref::T = L_REF
+    slope::T = 1.0
 end
 
-AstroFit.render(m::RedshiftFluxScale1D, lambda::Number) = inv(1 + m.z)
+# Multiplicative dust screen (rest-frame): power-law attenuation, stronger in
+# the blue -> reddens the whole intrinsic spectrum.
+AstroFit.render(m::DustScreen1D, lambda::Number) =
+    exp(-m.a_v * (lambda / m.lambda_ref)^(-m.slope))
 
 function galaxy_spectrum_model(;
         z = 0.036,
-        cont_slope = -1.0e-4,
-        cont_intercept = 1.2,
-        pl_norm = 0.75,
+        pl_norm = 2.0,
         pl_index = 1.1,
+        dust_av = 0.4,
+        dust_slope = 1.0,
         ha_amplitude = 8.0,
         narrow_sigma = 4.0,
         broad_ha_amplitude = 3.5,
         broad_sigma = 24.0,
         oiii_blue_amplitude = 1.9,
+        heii_amplitude = 1.2,
+        hei_amplitude = 0.8,
         nii_blue_amplitude = 0.75,
         sii_blue_amplitude = 0.9,
         sii_red_amplitude = 0.75,
@@ -54,14 +63,16 @@ function galaxy_spectrum_model(;
     )
 
     cm = @model begin
-        cont = Linear1D(slope = cont_slope, intercept = cont_intercept)
         stellar = PowerLaw1D(norm = pl_norm, x_ref = L_REF, index = pl_index)
+        dust = DustScreen1D(a_v = dust_av, lambda_ref = L_REF, slope = dust_slope)
 
         hbeta = Gaussian1D(amplitude = ha_amplitude / 2.86, mean = L_HB, sigma = narrow_sigma)
         broad_hbeta = Gaussian1D(amplitude = broad_ha_amplitude / 3.1, mean = L_HB, sigma = broad_sigma)
+        heii = Gaussian1D(amplitude = heii_amplitude, mean = L_HEII, sigma = narrow_sigma)
         oiii_b = Gaussian1D(amplitude = oiii_blue_amplitude, mean = L_OIII_B, sigma = narrow_sigma)
         oiii_r = Gaussian1D(amplitude = 2.98 * oiii_blue_amplitude, mean = L_OIII_R, sigma = narrow_sigma)
 
+        hei = Gaussian1D(amplitude = hei_amplitude, mean = L_HEI, sigma = narrow_sigma)
         ha = Gaussian1D(amplitude = ha_amplitude, mean = L_HA, sigma = narrow_sigma)
         broad_ha = Gaussian1D(amplitude = broad_ha_amplitude, mean = L_HA, sigma = broad_sigma)
         nii_b = Gaussian1D(amplitude = nii_blue_amplitude, mean = L_NII_B, sigma = narrow_sigma)
@@ -73,22 +84,22 @@ function galaxy_spectrum_model(;
         nad_d1 = Gaussian1D(amplitude = 0.65 * nad_d2_amplitude, mean = L_NAD_D1, sigma = nad_sigma)
 
         redshift = RedshiftAxis1D(z = z)
-        flux_scale = RedshiftFluxScale1D(z = z)
 
         (
-            (
-                cont + stellar + hbeta + broad_hbeta + oiii_b + oiii_r + ha +
+            dust * (
+                stellar + hbeta + broad_hbeta + heii + oiii_b + oiii_r + hei + ha +
                     broad_ha + nii_b + nii_r + sii_b + sii_r + nad_d2 + nad_d1
-            ) ∘ redshift
-        ) * flux_scale
+            )
+        ) ∘ redshift
     end
 
     @constrain cm begin
-        cont.slope in (-5.0e-4, 2.0e-4)
-        cont.intercept in (0.0, 4.0)
-        stellar.norm in (0.0, 6.0)
+        stellar.norm in (0.0, 12.0)
         stellar.x_ref
         stellar.index in (0.0, 5.0)
+        dust.a_v in (0.0, 3.0)
+        dust.lambda_ref
+        dust.slope in (0.5, 2.0)
 
         hbeta.amplitude -> ha.amplitude / 2.86
         hbeta.mean
@@ -96,6 +107,10 @@ function galaxy_spectrum_model(;
         broad_hbeta.amplitude -> broad_ha.amplitude / 3.1
         broad_hbeta.mean
         broad_hbeta.sigma -> broad_ha.sigma
+
+        heii.amplitude in (0.0, 10.0)
+        heii.mean
+        heii.sigma -> ha.sigma
 
         oiii_b.amplitude in (0.0, 20.0)
         oiii_b.mean
@@ -110,6 +125,10 @@ function galaxy_spectrum_model(;
         broad_ha.amplitude in (0.0, 20.0)
         broad_ha.mean
         broad_ha.sigma in (10.0, 80.0)
+
+        hei.amplitude in (0.0, 10.0)
+        hei.mean
+        hei.sigma -> ha.sigma
 
         nii_b.amplitude in (0.0, 15.0)
         nii_b.mean
@@ -133,7 +152,6 @@ function galaxy_spectrum_model(;
         nad_d1.sigma -> nad_d2.sigma
 
         redshift.z in (0.03, 0.055)
-        flux_scale.z -> redshift.z
     end
 
     return cm
@@ -151,9 +169,9 @@ function fitted_components(cm, p, lambda_obs)
 
     z = get(:redshift_z)
     lambda_rest = lambda_obs ./ (1 + z)
-    scale = inv(1 + z)
+    dust = DustScreen1D(a_v = get(:dust_a_v), lambda_ref = L_REF, slope = get(:dust_slope))
+    dustf = render(dust, lambda_rest)
 
-    cont = Linear1D(slope = get(:cont_slope), intercept = get(:cont_intercept))
     stellar = PowerLaw1D(norm = get(:stellar_norm), x_ref = L_REF, index = get(:stellar_index))
 
     ha_amp = get(:ha_amplitude)
@@ -161,24 +179,26 @@ function fitted_components(cm, p, lambda_obs)
     broad_ha_amp = get(:broad_ha_amplitude)
     broad_sigma = get(:broad_ha_sigma)
     oiii_b_amp = get(:oiii_b_amplitude)
+    heii_amp = get(:heii_amplitude)
+    hei_amp = get(:hei_amplitude)
     nii_b_amp = get(:nii_b_amplitude)
     sii_b_amp = get(:sii_b_amplitude)
     sii_r_amp = get(:sii_r_amplitude)
     nad_d2_amp = get(:nad_d2_amplitude)
     nad_sigma = get(:nad_d2_sigma)
 
-    continuum = scale .* render(cont + stellar, lambda_rest)
-    balmer = scale .* render(
+    continuum = dustf .* render(stellar, lambda_rest)
+    balmer = dustf .* render(
         Gaussian1D(amplitude = ha_amp / 2.86, mean = L_HB, sigma = sigma) +
             Gaussian1D(amplitude = ha_amp, mean = L_HA, sigma = sigma),
         lambda_rest
     )
-    broad_balmer = scale .* render(
+    broad_balmer = dustf .* render(
         Gaussian1D(amplitude = broad_ha_amp / 3.1, mean = L_HB, sigma = broad_sigma) +
             Gaussian1D(amplitude = broad_ha_amp, mean = L_HA, sigma = broad_sigma),
         lambda_rest
     )
-    forbidden = scale .* render(
+    forbidden = dustf .* render(
         Gaussian1D(amplitude = oiii_b_amp, mean = L_OIII_B, sigma = sigma) +
             Gaussian1D(amplitude = 2.98 * oiii_b_amp, mean = L_OIII_R, sigma = sigma) +
             Gaussian1D(amplitude = nii_b_amp, mean = L_NII_B, sigma = sigma) +
@@ -187,28 +207,35 @@ function fitted_components(cm, p, lambda_obs)
             Gaussian1D(amplitude = sii_r_amp, mean = L_SII_R, sigma = sigma),
         lambda_rest
     )
-    absorption = scale .* render(
+    helium = dustf .* render(
+        Gaussian1D(amplitude = heii_amp, mean = L_HEII, sigma = sigma) +
+            Gaussian1D(amplitude = hei_amp, mean = L_HEI, sigma = sigma),
+        lambda_rest
+    )
+    absorption = dustf .* render(
         Gaussian1D(amplitude = nad_d2_amp, mean = L_NAD_D2, sigma = nad_sigma) +
             Gaussian1D(amplitude = 0.65 * nad_d2_amp, mean = L_NAD_D1, sigma = nad_sigma),
         lambda_rest
     )
 
-    return (; z, continuum, balmer, broad_balmer, forbidden, absorption)
+    return (; z, continuum, balmer, broad_balmer, forbidden, helium, absorption)
 end
 
 Random.seed!(31415)
 
 truth_cm = galaxy_spectrum_model(
     z = 0.041,
-    cont_slope = -1.0e-5,
-    cont_intercept = 0.55,
-    pl_norm = 2.25,
+    pl_norm = 3.4,
     pl_index = 2.35,
+    dust_av = 0.7,
+    dust_slope = 1.1,
     ha_amplitude = 10.5,
     narrow_sigma = 4.3,
     broad_ha_amplitude = 4.8,
     broad_sigma = 31.0,
     oiii_blue_amplitude = 2.2,
+    heii_amplitude = 1.4,
+    hei_amplitude = 0.9,
     nii_blue_amplitude = 0.95,
     sii_blue_amplitude = 1.05,
     sii_red_amplitude = 0.82,
@@ -221,15 +248,17 @@ truth_cm = galaxy_spectrum_model(
 # catalog estimate before fitting the detailed constrained model.
 cm = galaxy_spectrum_model(
     z = 0.04,
-    cont_slope = -6.0e-5,
-    cont_intercept = 0.8,
-    pl_norm = 1.8,
+    pl_norm = 2.6,
     pl_index = 1.8,
+    dust_av = 0.4,
+    dust_slope = 1.0,
     ha_amplitude = 8.0,
     narrow_sigma = 5.2,
     broad_ha_amplitude = 3.8,
     broad_sigma = 24.0,
     oiii_blue_amplitude = 1.6,
+    heii_amplitude = 1.0,
+    hei_amplitude = 0.6,
     nii_blue_amplitude = 0.7,
     sii_blue_amplitude = 0.7,
     sii_red_amplitude = 0.7,
@@ -237,7 +266,7 @@ cm = galaxy_spectrum_model(
     nad_sigma = 1.3,
 )
 
-lambda = collect(range(4900.0, 7100.0; length = 1400))
+lambda = collect(range(4820.0, 7100.0; length = 1400))
 truth = withparams(truth_cm, params(truth_cm))
 flux_true = render(truth, lambda)
 err = 0.055 .+ 0.018 .* sqrt.(clamp.(flux_true, 0.0, Inf))
@@ -250,7 +279,7 @@ flux_fit = render(fit, lambda)
 resid_sigma = (flux .- flux_fit) ./ err
 
 println("retcode         : ", sol.retcode)
-println("raw parameters  : 43")
+println("raw parameters  : 49")  # total struct fields across all component models
 println("free parameters : ", nfree(cm))
 println("parameter names : ", paramnames(cm))
 println("final objective : ", round(sol.objective; digits = 3))
@@ -287,6 +316,10 @@ report(
     :oiii_b_amplitude, slot(paramnames(truth_cm), params(truth_cm), :oiii_b_amplitude),
     slot(names, sol.u, :oiii_b_amplitude)
 )
+report(
+    :dust_a_v, slot(paramnames(truth_cm), params(truth_cm), :dust_a_v),
+    slot(names, sol.u, :dust_a_v)
+)
 println("tie check [OIII] 5007/4959 : ", 2.98)
 
 lambda_plot = collect(range(first(lambda), last(lambda); length = 2200))
@@ -299,7 +332,7 @@ ax = Axis(
     fig[1, 1];
     xlabel = "",
     ylabel = "flux density",
-    title = "Redshifted galaxy spectrum fit: $(nfree(cm)) free parameters from 43 raw fields",
+    title = "Redshifted galaxy spectrum fit: $(nfree(cm)) free parameters from 49 raw fields",
 )
 zax = Axis(
     fig[1, 2];
@@ -315,6 +348,7 @@ lines!(ax, lambda_plot, parts.continuum; color = :gray35, linestyle = :dot, line
 lines!(ax, lambda_plot, parts.continuum .+ parts.balmer; color = :crimson, linewidth = 1.5, label = "narrow Balmer")
 lines!(ax, lambda_plot, parts.continuum .+ parts.broad_balmer; color = :purple3, linewidth = 1.7, label = "broad AGN Balmer")
 lines!(ax, lambda_plot, parts.continuum .+ parts.forbidden; color = :dodgerblue3, linewidth = 1.5, label = "forbidden lines")
+lines!(ax, lambda_plot, parts.continuum .+ parts.helium; color = :seagreen, linewidth = 1.5, label = "He I/II")
 lines!(ax, lambda_plot, parts.continuum .+ parts.absorption; color = :darkorange3, linewidth = 1.5, label = "Na D absorption")
 
 ha_center_obs = L_HA * (1 + parts.z)
@@ -353,7 +387,9 @@ lines!(
 )
 
 line_labels = [
+    ("HeII", L_HEII),
     ("Hbeta", L_HB),
+    ("HeI", L_HEI),
     ("[OIII]", L_OIII_B),
     ("[OIII]", L_OIII_R),
     ("Na D", L_NAD_D2),
