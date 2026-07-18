@@ -1,4 +1,4 @@
-using MacroTools: @capture
+using MacroTools: @capture, postwalk
 
 """
     @model begin
@@ -96,16 +96,16 @@ end
 # collected in order); all other code is left intact.
 function _tiewalk(rhs, root)
     paths = Tuple{Symbol, Symbol}[]; args = Symbol[]
-    walk(x) =
-    if x isa Expr && x.head === :. && x.args[1] isa Expr &&
-            x.args[1].head === :. && x.args[1].args[1] == root
-        (_, l, f) = _splitpath(x); g = gensym(); push!(paths, (l, f)); push!(args, g); g
-    elseif x isa Expr
-        Expr(x.head, map(walk, x.args)...)
-    else
-        x
+    newrhs = postwalk(rhs) do x
+        if @capture(x, $root.leaf_.field_)
+            g = gensym()
+            push!(paths, (leaf, field))
+            push!(args, g)
+            g
+        else
+            x
+        end
     end
-    newrhs = walk(rhs)
     pe = Expr(:tuple, (Expr(:tuple, QuoteNode(l), QuoteNode(f)) for (l, f) in paths)...)
     return (pe, Expr(:->, Expr(:tuple, args...), newrhs))
 end
