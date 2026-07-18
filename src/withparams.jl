@@ -1,4 +1,4 @@
-using Accessors: constructorof
+using ConstructionBase: constructorof
 
 """
     _slotmap!(map, T, counter) -> Dict{Tuple{Symbol,Symbol}, Int}
