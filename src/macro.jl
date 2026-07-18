@@ -291,52 +291,36 @@ macro constrain(cm, blk)
     blk isa Expr && blk.head === :block || error("@constrain expects a begin…end block")
     cm isa Symbol || error("@constrain: first argument must be a variable name")
     g = gensym(:cm); seen = Set{Tuple{Symbol, Symbol}}()
-    # Inject the model gensym only into *path* positions (`leaf.field` → `g.leaf.field`).
-    # Value positions (rhs of `=`, the `(lo, hi)` tuple, the prior dist) stay untouched —
-    # injecting them would mangle caller data like `= cfg.factor` into `g.cfg.factor`.
-    splitp(e) = _splitpath(_inject(g, e))
     out = Any[:($g = $(esc(cm)))]
     for s in blk.args
         s isa LineNumberNode && continue
 
-        if s isa Expr && s.head === :.
-            (_, l, f) = splitp(s)
-            _checkdup!(seen, l, f)
-            push!(out, :($g = $(_setexpr(g, l, f, _fixcurrent(g, l, f)))))
+        if @capture(s, leaf_.field_ = val_)
+            _checkdup!(seen, leaf, field)
+            push!(out, :($g = $(_setexpr(g, leaf, field, :(Fixed($(esc(val))))))))
 
-        elseif s isa Expr && s.head === :(=)
-            (_, l, f) = splitp(s.args[1])
-            _checkdup!(seen, l, f)
-            push!(out, :($g = $(_setexpr(g, l, f, :(Fixed($(esc(s.args[2]))))))))
-
-        elseif s isa Expr && s.head === :->
-            lhs = s.args[1]
-            rhs_block = s.args[2]
+        elseif @capture(s, leaf_.field_ -> rhs_block_)
             rhs = rhs_block isa Expr && rhs_block.head === :block ? rhs_block.args[end] : rhs_block
-            (_, l, f) = splitp(lhs)
+            # Inject the model gensym only into the rhs *paths* (`leaf.field` → `g.leaf.field`);
+            # see the ponytail note on _inject about dotted caller data.
             (pe, lam) = _tiewalk(_inject(g, rhs), g)
-            _checkdup!(seen, l, f)
-            push!(out, :($g = $(_setexpr(g, l, f, :(Tied($pe, $(esc(lam))))))))
+            _checkdup!(seen, leaf, field)
+            push!(out, :($g = $(_setexpr(g, leaf, field, :(Tied($pe, $(esc(lam))))))))
 
-        elseif s isa Expr && s.head === :call && length(s.args) >= 3 && s.args[1] === :in
-            tup = s.args[3]
-            tup isa Expr && tup.head === :tuple && length(tup.args) == 2 ||
-                error("@constrain: `in` expects `path in (lo, hi)`")
-            (_, l, f) = splitp(s.args[2])
-            lo, hi = tup.args
-            _checkdup!(seen, l, f)
-            push!(out, :($g = $(_setexpr(g, l, f, :(Bounded($(esc(lo)), $(esc(hi))))))))
+        elseif @capture(s, leaf_.field_ in (lo_, hi_))
+            _checkdup!(seen, leaf, field)
+            push!(out, :($g = $(_setexpr(g, leaf, field, :(Bounded($(esc(lo)), $(esc(hi))))))))
 
-        elseif s isa Expr && s.head === :call && length(s.args) == 3 && s.args[1] === :~
-            (_, l, f) = splitp(s.args[2])
-            push!(out, :($g = setprior($g, $(QuoteNode(l)), $(QuoteNode(f)), $(esc(s.args[3])))))
+        elseif @capture(s, leaf_.field_ ~ dist_)
+            push!(out, :($g = setprior($g, $(QuoteNode(leaf)), $(QuoteNode(field)), $(esc(dist)))))
 
-        elseif s isa Expr && s.head === :macrocall && s.args[1] === Symbol("@free")
-            fargs = [x for x in s.args[3:end] if !(x isa LineNumberNode)]
-            length(fargs) == 1 || error("@free expects one path")
-            (_, l, f) = splitp(fargs[1])
-            _checkdup!(seen, l, f)
-            push!(out, :($g = $(_setexpr(g, l, f, :(Free())))))
+        elseif @capture(s, @free leaf_.field_)
+            _checkdup!(seen, leaf, field)
+            push!(out, :($g = $(_setexpr(g, leaf, field, :(Free())))))
+
+        elseif @capture(s, leaf_.field_)
+            _checkdup!(seen, leaf, field)
+            push!(out, :($g = $(_setexpr(g, leaf, field, _fixcurrent(g, leaf, field)))))
 
         else
             error("@constrain: unrecognized expression `$s`")
