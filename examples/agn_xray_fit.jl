@@ -89,13 +89,20 @@ end
 # the k=0 factor zeroes it out). At k=0 the exact log-likelihood collapses to
 # -λ anyway (log and loggamma(1) terms both vanish), so branch around it —
 # this is a numerically-safe rewrite of the same formula, not a domain guard.
+# This IS the XSPEC "cstat"/Cash (1979) statistic: fit directly on
+# unrebinned counts, no minimum-counts-per-bin grouping needed, unlike the
+# chi²-on-grouped-data alternative XSPEC also offers.
 poisson_ll_term(λ, k) = k == 0 ? -λ : logpdf(Poisson(λ), k)
 
-poisson_loglike(f::ObjectiveFunction, p) = begin
-    m = withparams(f.cm, p)
-    Es = f.coords[1]
-    sum(i -> poisson_ll_term(render(m, Es[i]), f.y[i]), eachindex(f.y))
+# Same two-method shape as AstroFit's own `chi2(model, coords, y, err)` /
+# `chi2(f::ObjectiveFunction, p)` (src/fit/loss.jl) — keeps the tree-walk
+# out of the per-point term and makes the statistic reusable outside fitting
+# (e.g. to score `λ_true` below without touching `ObjectiveFunction`).
+poisson_loglike(model, coords, y) = begin
+    Es = coords[1]
+    sum(i -> poisson_ll_term(render(model, Es[i]), y[i]), eachindex(y))
 end
+poisson_loglike(f::ObjectiveFunction, p) = poisson_loglike(withparams(f.cm, p), f.coords, f.y)
 
 # Optimization.jl minimizes — negate the log-likelihood to fit.
 prob = OptimizationProblem(cm, E, counts; statistic = (f, p) -> -poisson_loglike(f, p))
@@ -112,21 +119,54 @@ println()
 # ---------------------------------------------------------------------------
 # 5. Plot: initial guess vs best fit vs data
 # ---------------------------------------------------------------------------
+# √N is undefined/misleading at N=0 (and biased for small N in general), so
+# use the Gehrels (1986) approximate 1σ Poisson confidence limits instead —
+# the standard asymmetric error astronomers quote on low-count spectra, and
+# well-defined at N=0 (upper limit only, lower error clamps to 0).
+gehrels_upper(n) = n + 1 + sqrt(n + 0.75)
+gehrels_lower(n) = n == 0 ? 0.0 : n * (1 - 1 / (9n) - 1 / (3 * sqrt(n)))^3
+err_hi = [gehrels_upper(n) - n for n in counts]
+err_lo = [n - gehrels_lower(n) for n in counts]
+
 λ_init = render(cm, E)
 λ_fit = render(fit_tree, E)
+
+# log-log, as XSPEC always plots folded spectra — linear axes hide the
+# absorption turnover (E^-3 cross-section spans orders of magnitude below
+# ~1 keV) and the Fe Kα bump under the continuum peak. log(0) is undefined,
+# so: model curves get a floor matched to the axis's own lower limit (the
+# fit itself never sees this — `counts`, `sol`, `fit_tree` are all
+# untouched), and zero-count bins are dropped from the data points (nothing
+# physically wrong with them, see poisson_ll_term — they just can't sit on a
+# log y-axis). A floor many decades below the plotted range (e.g. 1e-6)
+# would draw a flat shelf across most of the panel instead of letting the
+# curve run off the bottom edge like a real folded-spectrum plot.
+floor_for_log = 1e-2
+λ_true_plot = max.(λ_true, floor_for_log)
+λ_init_plot = max.(λ_init, floor_for_log)
+λ_fit_plot = max.(λ_fit, floor_for_log)
+detected = counts .> 0
 
 fig = Figure(size = (900, 500))
 ax = Axis(
     fig[1, 1]; xlabel = "Energy (keV)", ylabel = "Counts",
+    xscale = log10, yscale = log10, limits = (nothing, nothing, floor_for_log, nothing),
     title = "Absorbed AGN Fit: phabs × zphabs × (powerlaw + Fe Kα), Poisson statistic"
 )
 
-scatter!(ax, E, counts; color = :grey60, markersize = 4, label = "data (counts)")
-lines!(ax, E, λ_true; color = :black, linestyle = :dash, label = "truth")
-lines!(ax, E, λ_init; color = :dodgerblue, linestyle = :dot, label = "initial guess")
-lines!(ax, E, λ_fit; color = :red, linewidth = 2, label = "best fit")
+errorbars!(
+    ax, E[detected], counts[detected], err_lo[detected], err_hi[detected];
+    color = :grey60, whiskerwidth = 3
+)
+scatter!(
+    ax, E[detected], counts[detected]; color = :grey60, markersize = 4,
+    label = "data (counts, Gehrels 1σ)"
+)
+lines!(ax, E, λ_true_plot; color = :black, linestyle = :dash, label = "truth")
+lines!(ax, E, λ_init_plot; color = :dodgerblue, linestyle = :dot, label = "initial guess")
+lines!(ax, E, λ_fit_plot; color = :red, linewidth = 2, label = "best fit")
 
-axislegend(ax; position = :rt)
+axislegend(ax; position = :lb)
 
 display(fig)
 # save("examples/agn_xray_fit.png", fig; px_per_unit = 2)
