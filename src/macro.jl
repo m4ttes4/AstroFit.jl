@@ -277,13 +277,14 @@ See also: [`@model`](@ref), [`validate`](@ref)
 :(@constrain)
 
 # ponytail: also catches dotted caller data (`= point.x`) — snapshot to a local first.
-_inject(root, e) =
-if e isa Expr && e.head === :. && e.args[1] isa Symbol && e.args[2] isa QuoteNode
-    Expr(:., Expr(:., root, QuoteNode(e.args[1])), e.args[2])
-elseif e isa Expr
-    Expr(e.head, (_inject(root, a) for a in e.args)...)
-else
-    e
+function _inject(root, e)
+    return postwalk(e) do x
+        if @capture(x, leaf_.field_) && leaf isa Symbol
+            :($root.$leaf.$field)
+        else
+            x
+        end
+    end
 end
 
 macro constrain(cm, blk)
