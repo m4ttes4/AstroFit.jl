@@ -1,3 +1,5 @@
+using MacroTools: @capture
+
 """
     @model begin
         name₁ = ModelExpr(...)
@@ -86,9 +88,8 @@ _leafnames!(acc, m) = (_leafnames!(acc, m.left); _leafnames!(acc, m.right); acc)
 
 # Split a `model.leaf.field` access → (model_expr, :leaf, :field).
 function _splitpath(e)
-    e isa Expr && e.head === :. && e.args[1] isa Expr && e.args[1].head === :. ||
-        error("expected `model.leaf.field`, got `$e`")
-    return (e.args[1].args[1], e.args[1].args[2].value, e.args[2].value)
+    @capture(e, model_.leaf_.field_) || error("expected `model.leaf.field`, got `$e`")
+    return (model, leaf, field)
 end
 
 # @tie RHS → (paths_expr, lambda). Every `root.leaf.field` becomes a fresh arg (masters
