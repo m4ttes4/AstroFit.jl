@@ -73,7 +73,7 @@ function _header(io, title, counts)
             (counts.fixed, "fixed", :red),
             (counts.tied, "tied", _TIED_COLOR),
         )
-        printstyled(io, "  ·  "; color = :light_black)
+        printstyled(io, "  "; color = :white)
         _stat(io, n, label, color)
     end
     return println(io)
@@ -114,7 +114,7 @@ function _tree(io, node, prefix, islast, isroot = false, priors = Dict{Symbol, A
             )
         end
     else
-        printstyled(io, _opsym(node), "\n"; color = :light_black, bold = true)
+        printstyled(io, _opsym(node), "\n"; color = :yellow, bold = true)
         kids = _kids(node)
         for (i, k) in enumerate(kids)
             _tree(io, k, child, i == length(kids), false, priors)
@@ -124,7 +124,7 @@ end
 
 function _leafline(io, l)
     printstyled(io, _leafname(l); color = :cyan, bold = true)
-    printstyled(io, " :: "; color = :light_black)
+    printstyled(io, " :: "; color = :white)
     return printstyled(io, nameof(typeof(l.model)); color = :blue)
 end
 
@@ -175,7 +175,7 @@ end
 function Base.show(io::IO, ::MIME"text/plain", f::ObjectiveFunction)
     printstyled(io, "ObjectiveFunction"; bold = true)
     for s in (_statlabel(f.statistic), "$(length(f.y)) pts", f.err === nothing ? "unweighted" : "weighted")
-        printstyled(io, "  ·  "; color = :light_black)
+        printstyled(io, "  "; color = :white)
         print(io, s)
     end
     println(io)
