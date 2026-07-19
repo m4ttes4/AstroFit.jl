@@ -50,6 +50,14 @@ end
     g2.sigma -> g1.sigma
     # g2 amplitude tied to half of g1
     g2.amplitude -> 0.5 * g1.amplitude
+    # logposterior no longer auto-rejects out-of-bounds points — priors below
+    # are what give -Inf outside the box (Pigeons needs this hard boundary)
+    cont.slope ~ Uniform(-0.1, 0.1)
+    cont.intercept ~ Uniform(0.0, 2.0)
+    g1.amplitude ~ Uniform(0.0, 15.0)
+    g1.mean ~ Uniform(3.5, 6.5)
+    g1.sigma ~ Uniform(0.2, 1.5)
+    g2.mean ~ Uniform(6.0, 9.0)
 end
 
 # ---------------------------------------------------------------------------

@@ -67,10 +67,11 @@ err = fill(σ, length(t))
 # ---------------------------------------------------------------------------
 # 2. Model with constraints AND priors, all in one @constrain block
 # ---------------------------------------------------------------------------
-# Priors sit on top of the same bounds used in the deterministic example —
-# NUTS still needs the walls (rp_rs > 0, period/t0 within the periodogram-
-# resolved window) but the priors are what keep the sampler from wasting
-# time exploring flat, eclipse-free regions of that window.
+# Priors sit on top of the same bounds used in the deterministic example.
+# logposterior no longer auto-rejects out-of-bounds points, so each prior is
+# Truncated to its bound (rp_rs > 0, period/t0 within the periodogram-
+# resolved window) — the walls NUTS needs plus what keeps the sampler from
+# wasting time exploring flat, eclipse-free regions of that window.
 cm = @model begin
     dipA = Occult1D(rp_rs = 0.25, a_rs = 8.0, b = 0.2, period = 2.4, t0 = 0.1)
     dipB = Occult1D(rp_rs = 2.0, a_rs = 20.0, b = 0.5, period = 2.4, t0 = 1.35)
@@ -92,10 +93,10 @@ end
     dipB.t0 -> dipA.t0 + dipA.period / 2
     dipB.rp_rs -> 1 / dipA.rp_rs
     LB.value -> 1 - LA.value
-    dipA.rp_rs ~ LogNormal(log(0.3), 0.3)
-    dipA.period ~ Normal(2.4, 0.1)
-    dipA.t0 ~ Normal(0.1, 0.15)
-    LA.value ~ Beta(2, 2)
+    dipA.rp_rs ~ Truncated(LogNormal(log(0.3), 0.3), 0.05, 1.0)
+    dipA.period ~ Truncated(Normal(2.4, 0.1), 2.2, 2.8)
+    dipA.t0 ~ Truncated(Normal(0.1, 0.15), -0.2, 0.4)
+    LA.value ~ Truncated(Beta(2, 2), 0.01, 0.99)
 end
 
 # ---------------------------------------------------------------------------

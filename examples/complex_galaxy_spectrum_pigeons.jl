@@ -136,6 +136,25 @@ function galaxy_spectrum_model(;
 
         redshift.z in (0.03, 0.055)
         flux_scale.z -> redshift.z
+
+        # logposterior no longer auto-rejects out-of-bounds points — priors
+        # below are what give -Inf outside the box (Pigeons needs this hard
+        # boundary). Only free params need one; Fixed/Tied fields above don't.
+        cont.slope ~ Uniform(-5.0e-4, 2.0e-4)
+        cont.intercept ~ Uniform(0.0, 4.0)
+        stellar.norm ~ Uniform(0.0, 6.0)
+        stellar.index ~ Uniform(0.0, 5.0)
+        oiii_b.amplitude ~ Uniform(0.0, 20.0)
+        ha.amplitude ~ Uniform(0.0, 40.0)
+        ha.sigma ~ Uniform(1.0, 12.0)
+        broad_ha.amplitude ~ Uniform(0.0, 20.0)
+        broad_ha.sigma ~ Uniform(10.0, 80.0)
+        nii_b.amplitude ~ Uniform(0.0, 15.0)
+        sii_b.amplitude ~ Uniform(0.0, 15.0)
+        sii_r.amplitude ~ Uniform(0.0, 15.0)
+        nad_d2.amplitude ~ Uniform(-5.0, 0.0)
+        nad_d2.sigma ~ Uniform(0.2, 5.0)
+        redshift.z ~ Uniform(0.03, 0.055)
     end
 
     return cm

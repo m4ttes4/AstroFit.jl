@@ -1,9 +1,9 @@
 module AstroFitDistributionsExt
 
 using AstroFit
-using Distributions: logpdf, Uniform
+using Distributions: logpdf, Distribution
 
-import AstroFit: logprior, setprior, _validate_priors, _reference_dists
+import AstroFit: logprior, setprior, _validate_priors, _resolve_priors
 
 function setprior(cm::AstroFit.CompiledModel, leaf::Symbol, field::Symbol, dist)
     AstroFit._masterfree(cm, leaf, field) || throw(
@@ -31,41 +31,51 @@ function _validate_priors(cm::AstroFit.CompiledModel)
     return nothing
 end
 
-function logprior(cm::AstroFit.CompiledModel, p)
+# Resolve (leaf,field)=>dist priors into a Vector aligned with paramnames(cm)/p,
+# once per ObjectiveFunction construction. Every free parameter must have a
+# prior — logposterior/logprior are Bayesian-only entry points and there is no
+# implicit fallback (bounds are not priors); this throws immediately if any
+# free parameter is missing one, rather than silently contributing 0. Narrowed
+# to a concrete small-Union eltype (not Vector{Any}) so logprior's hot-path
+# loop dispatches logpdf statically per element instead of dynamically.
+function _resolve_priors(cm::AstroFit.CompiledModel, names)
     priors = getfield(cm, :priors)
-    (priors === nothing || isempty(priors)) && return 0.0
-    names = AstroFit.paramnames(cm)
-    s = 0.0
-    for ((leaf, field), dist) in priors
-        target = Symbol(leaf, :_, field)
-        idx = findfirst(==(target), names)
-        s += logpdf(dist, p[idx])
+    priors === nothing && return nothing
+
+    prior_map = Dict(Symbol(leaf, :_, field) => dist for ((leaf, field), dist) in priors)
+    length(prior_map) == length(priors) || throw(ArgumentError(
+        "duplicate prior target in @constrain block"
+    ))
+
+    resolved = map(names) do name
+        dist = get(prior_map, name, nothing)
+        dist === nothing && throw(ArgumentError(
+            "parameter `$name` has no prior — every free parameter needs one for Bayesian inference"
+        ))
+        dist isa Distribution || throw(ArgumentError(
+            "prior for `$name` must be a Distribution, got $(typeof(dist))"
+        ))
+        dist
     end
-    return s
+    length(prior_map) == length(names) || throw(ArgumentError(
+        "prior set for a target that isn't a free parameter of this model"
+    ))
+
+    U = Union{unique(typeof.(resolved))...}
+    return Vector{U}(resolved)
 end
 
-logprior(cm::AstroFit.CompiledModel) = logprior(cm, AstroFit.params(cm))
-
-# Reference distribution per parameter: user prior if set, else Uniform from
-# finite bounds. Throws if a parameter has neither.
-function _reference_dists(cm::AstroFit.CompiledModel, names, lower, upper)
-    priors = getfield(cm, :priors)
-    prior_map = Dict{Symbol, Any}()
-    if priors !== nothing
-        for ((leaf, field), dist) in priors
-            prior_map[Symbol(leaf, :_, field)] = dist
-        end
+function logprior(f::AstroFit.ObjectiveFunction, p)
+    dists = f.priors
+    dists === nothing && throw(ArgumentError(
+        "no priors set on this model — logprior/logposterior require every " *
+            "free parameter to have a prior (0/$(length(p)) set)"
+    ))
+    s = 0.0
+    for i in eachindex(dists, p)
+        s += logpdf(dists[i], p[i])
     end
-    return map(eachindex(names)) do i
-        name = names[i]
-        haskey(prior_map, name) && return prior_map[name]
-        lo, hi = lower[i], upper[i]
-        isfinite(lo) && isfinite(hi) && return Uniform(lo, hi)
-        throw(ArgumentError(
-            "Parameter `$name` has no prior and no finite bounds. " *
-            "Set a prior with `@constrain` or provide an explicit reference distribution."
-        ))
-    end
+    return s
 end
 
 end

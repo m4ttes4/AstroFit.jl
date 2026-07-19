@@ -119,7 +119,7 @@ f(p)                     # poisson_ll(f, p)
 
 See also: [`chi2`](@ref), [`loglikelihood`](@ref), [`logposterior`](@ref)
 """
-struct ObjectiveFunction{CM, C, Y, E, S}
+struct ObjectiveFunction{CM, C, Y, E, S, PR}
     cm::CM
     coords::C
     y::Y
@@ -130,6 +130,7 @@ struct ObjectiveFunction{CM, C, Y, E, S}
     statistic::S
     ndim::Int
     _loglike_const::Float64
+    priors::PR
 end
 
 function ObjectiveFunction(cm::CompiledModel, x, y, err = nothing; statistic = chi2)
@@ -139,6 +140,7 @@ function ObjectiveFunction(cm::CompiledModel, x, y, err = nothing; statistic = c
     llc = err === nothing ?
         -n / 2 * log(2π) :
         -sum(log, err) - n / 2 * log(2π)
+    names = paramnames(cm)
     return ObjectiveFunction(
         cm,
         _coords(x),
@@ -146,10 +148,11 @@ function ObjectiveFunction(cm::CompiledModel, x, y, err = nothing; statistic = c
         err,
         Float64.(lower),
         Float64.(upper),
-        paramnames(cm),
+        names,
         statistic,
         nfree(cm),
         llc,
+        _resolve_priors(cm, names),
     )
 end
 
@@ -174,25 +177,20 @@ See also: [`chi2`](@ref), [`logposterior`](@ref)
 """
 negloglikelihood(f::ObjectiveFunction, p) = -loglikelihood(f, p)
 
-function _inside_bounds(f::ObjectiveFunction, p)
-    for i in eachindex(p)
-        (f.lower[i] <= p[i] <= f.upper[i]) || return false
-    end
-    return true
-end
-
 """
     logposterior(f::ObjectiveFunction, p) -> Float64
 
 Compute the log-posterior: `logprior(cm, p) + loglikelihood(f, p)`.
 
-Returns `-Inf` if `p` is outside the parameter bounds.
+`Bounded` parameters are not automatically rejected outside their bounds —
+attach an explicit `@prior leaf.field ~ Uniform(lower, upper)` (or a
+`Truncated` prior) if you need that enforced as `-Inf`. Requires
+`Distributions.jl`.
 
 See also: [`loglikelihood`](@ref), [`logprior`](@ref)
 """
 function logposterior(f::ObjectiveFunction, p)
-    _inside_bounds(f, p) || return -Inf
-    return _logprior(f.cm, p) + loglikelihood(f, p)
+    return logprior(f, p) + loglikelihood(f, p)
 end
 
 """

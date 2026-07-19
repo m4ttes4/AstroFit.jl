@@ -10,7 +10,8 @@ function Pigeons.initialization(f::AstroFit.ObjectiveFunction, rng::AbstractRNG,
         "Pigeons requires a log-density statistic. " *
         "Use `ObjectiveFunction(cm, x, y, err; statistic = logposterior)`."
     ))
-    return rand(rng, f.cm)
+    _check_priors(f)
+    return [rand(rng, dist) for dist in f.priors]
 end
 
 
@@ -27,8 +28,16 @@ function Pigeons.default_reference(f::AstroFit.ObjectiveFunction)
         "Pigeons requires a log-density statistic. " *
         "Use `ObjectiveFunction(cm, x, y, err; statistic = logposterior)`."
     ))
-    dists = AstroFit._reference_dists(f.cm, f.names, f.lower, f.upper)
-    return DistributionLogPotential(product_distribution(dists))
+    _check_priors(f)
+    return DistributionLogPotential(product_distribution(f.priors))
 end
+
+# The reference distribution *is* the prior — reusing f.priors (rather than a
+# separate bounds-derived fallback) keeps reference and target sharing the
+# same support automatically: truncated iff the user truncated the prior.
+_check_priors(f::AstroFit.ObjectiveFunction) = f.priors === nothing && throw(ArgumentError(
+    "no priors set on this model — Pigeons requires every free parameter " *
+        "to have a prior (0/$(f.ndim) set)"
+))
 
 end

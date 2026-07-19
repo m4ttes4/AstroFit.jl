@@ -67,6 +67,14 @@ end
     nii_b.amplitude -> ha.amplitude / 3.0
     nii_b.mean -> (λ_NII_b / λ_Ha) * ha.mean
     nii_b.sigma -> ha.sigma
+    # logposterior no longer auto-rejects out-of-bounds points; these Uniform
+    # priors reproduce hand_logposterior's hard_lower/hand_upper walls below
+    # so af_target and hand stay the same distribution, not just equal at p0.
+    cont.slope ~ Uniform(-0.05, 0.05)
+    cont.intercept ~ Uniform(0.0, 5.0)
+    ha.amplitude ~ Uniform(0.1, 30.0)
+    ha.mean ~ Uniform(6540.0, 6590.0)
+    ha.sigma ~ Uniform(1.0, 12.0)
 end
 
 # ---------------------------------------------------------------------------
@@ -142,7 +150,11 @@ p0 = AstroFit.params(cm)
 af_target = ObjectiveFunction(cm, x, y, err; statistic = logposterior)
 hand = HandTarget(x, y, err)
 
-@assert af_target(p0) ≈ hand(p0) "AstroFit vs handwritten log-posterior diverge: $(af_target(p0)) vs $(hand(p0))"
+# af_target's Uniform priors add logpdf's normalization -log(hi-lo) per
+# parameter, which hand_logposterior's raw box-check doesn't — subtract it
+# so this checks the posterior shape, not an incidental constant offset.
+uniform_norm_const = -sum(log, hand_upper .- hand_lower)
+@assert af_target(p0) - uniform_norm_const ≈ hand(p0) "AstroFit vs handwritten log-posterior diverge: $(af_target(p0)) vs $(hand(p0))"
 println("log-posterior equivalence check: ✓")
 
 # ---------------------------------------------------------------------------

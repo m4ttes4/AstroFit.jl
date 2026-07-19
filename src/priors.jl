@@ -30,17 +30,12 @@ See also: [`setprior`](@ref), [`logposterior`](@ref)
 """
 logprior(args...) = _missing_distributions()
 
-function _logprior(cm::CompiledModel, p)
-    priors = getfield(cm, :priors)
-    (priors === nothing || isempty(priors)) && return 0.0
-    logprior(cm, p)
-end
-
 # Validate priors target free parameters. Real method in DistributionsExt; the
 # Nothing case (no priors) is a no-op that needs no Distributions.
 _validate_priors(::CompiledModel{<:Any, Nothing}) = nothing
 
-# Build reference distributions for sampling: prior if set, else Uniform from
-# bounds. Used by AstroFitPigeonsExt; implemented in AstroFitDistributionsExt
-# (which Pigeons co-triggers, so the method is always available there).
-_reference_dists(args...) = _missing_distributions()
+# Resolve (leaf,field)=>dist priors into a Vector aligned with paramnames(cm)/p,
+# once per ObjectiveFunction construction instead of per logprior call. Real
+# method (which also validates every free parameter has a prior) lives in
+# DistributionsExt; the Nothing case needs no Distributions.
+_resolve_priors(::CompiledModel{<:Any, Nothing}, names) = nothing

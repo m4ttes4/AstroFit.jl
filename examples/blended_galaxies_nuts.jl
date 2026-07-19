@@ -8,8 +8,9 @@
 #   axis ratio  → Beta(4,2)  (mean 0.67, slightly prefers rounder galaxies)
 #   theta       → Uniform on bounds  (no a-priori preferred orientation)
 #
-# NOTE: parameters have hard bounds; logposterior returns -Inf outside them.
-# NUTS handles this well when priors keep the posterior away from walls.
+# NOTE: logposterior no longer auto-rejects out-of-bounds points, so every
+# prior below is Truncated to its bound — that's what gives -Inf outside the
+# box. NUTS handles this well when priors keep the posterior away from walls.
 # For wall-free sampling use Bijectors.jl to transform to ℝⁿ first.
 #
 # Run with:  julia --project=examples/ examples/blended_galaxies_nuts.jl
@@ -89,24 +90,24 @@ end
     disk2.q          in (0.1, 1.0)
     disk2.theta      in (-1.6, 1.6)
 
-    # --- priors ---
-    bulge1.amplitude ~ LogNormal(log(50.0), 0.8)
-    bulge1.sigma     ~ LogNormal(log(1.5),  0.5)
-    bulge1.q         ~ Beta(4, 2)
-    disk1.amplitude  ~ LogNormal(log(15.0), 0.8)
-    disk1.x0         ~ Normal(-2.0, 2.0)
-    disk1.y0         ~ Normal(-0.5, 2.0)
-    disk1.r_eff      ~ LogNormal(log(4.0),  0.5)
-    disk1.q          ~ Beta(4, 2)
+    # --- priors (Truncated to the bounds above wherever support is wider) ---
+    bulge1.amplitude ~ Truncated(LogNormal(log(50.0), 0.8), 0.1, 300.0)
+    bulge1.sigma     ~ Truncated(LogNormal(log(1.5),  0.5), 0.1, 5.0)
+    bulge1.q         ~ Truncated(Beta(4, 2), 0.1, 1.0)
+    disk1.amplitude  ~ Truncated(LogNormal(log(15.0), 0.8), 0.1, 200.0)
+    disk1.x0         ~ Truncated(Normal(-2.0, 2.0), -6.0, 2.0)
+    disk1.y0         ~ Truncated(Normal(-0.5, 2.0), -5.0, 3.0)
+    disk1.r_eff      ~ Truncated(LogNormal(log(4.0),  0.5), 0.3, 8.0)
+    disk1.q          ~ Truncated(Beta(4, 2), 0.1, 1.0)
     disk1.theta      ~ Uniform(-1.6, 1.6)
-    bulge2.amplitude ~ LogNormal(log(30.0), 0.8)
-    bulge2.sigma     ~ LogNormal(log(1.0),  0.5)
-    bulge2.q         ~ Beta(4, 2)
-    disk2.amplitude  ~ LogNormal(log(10.0), 0.8)
-    disk2.x0         ~ Normal(3.0, 2.0)
-    disk2.y0         ~ Normal(1.5, 2.0)
-    disk2.r_eff      ~ LogNormal(log(3.5),  0.5)
-    disk2.q          ~ Beta(4, 2)
+    bulge2.amplitude ~ Truncated(LogNormal(log(30.0), 0.8), 0.1, 300.0)
+    bulge2.sigma     ~ Truncated(LogNormal(log(1.0),  0.5), 0.1, 5.0)
+    bulge2.q         ~ Truncated(Beta(4, 2), 0.1, 1.0)
+    disk2.amplitude  ~ Truncated(LogNormal(log(10.0), 0.8), 0.1, 200.0)
+    disk2.x0         ~ Truncated(Normal(3.0, 2.0), -1.0, 7.0)
+    disk2.y0         ~ Truncated(Normal(1.5, 2.0), -3.0, 5.0)
+    disk2.r_eff      ~ Truncated(LogNormal(log(3.5),  0.5), 0.3, 8.0)
+    disk2.q          ~ Truncated(Beta(4, 2), 0.1, 1.0)
     disk2.theta      ~ Uniform(-1.6, 1.6)
 end
 

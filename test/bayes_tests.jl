@@ -18,7 +18,6 @@
     @test length(getfield(cm, :priors)) == 1
     @test only(getfield(cm, :priors))[2] === prior
     @test bounds(cm) == ([-Inf, -Inf, 0.0], [Inf, Inf, Inf])
-    @test logprior(cm) == logpdf(prior, cm.line.model.sigma)
 end
 
 @testitem "priors: user priors override by target" tags = [:bayes] begin
@@ -133,14 +132,20 @@ end
 
 @testitem "ObjectiveFunction: statistic is a callable" tags = [:bayes] begin
     using AstroFit
+    using Distributions
 
     cm = @model begin
         g = Gaussian1D(amplitude = 1.0, mean = 0.0, sigma = 1.0)
         g
     end
+    @constrain cm begin
+        g.amplitude ~ Normal(1.0, 1.0)
+        g.mean ~ Normal(0.0, 1.0)
+        g.sigma ~ Normal(1.0, 1.0)
+    end
     x = collect(-2.0:0.5:2.0)
     y = render(cm, x)
-    u = params(cm)
+    u = AstroFit.params(cm)
 
     f = ObjectiveFunction(cm, x, y; statistic = logposterior)
     @test f(u) == logposterior(f, u)
@@ -151,7 +156,7 @@ end
 end
 
 @testitem "ObjectiveFunction: Bayesian extensions ignore statistic" tags = [:bayes] begin
-    using AstroFit, LogDensityProblems, Pigeons, Random
+    using AstroFit, LogDensityProblems, Pigeons, Random, Distributions
 
     cm = @model begin
         g = Gaussian1D(amplitude = 1.0, mean = 0.0, sigma = 1.0)
@@ -160,9 +165,14 @@ end
     @bound cm.g.amplitude in (0, 10)
     @bound cm.g.mean in (-5, 5)
     @bound cm.g.sigma in (0.1, 10)
+    @constrain cm begin
+        g.amplitude ~ Uniform(0, 10)
+        g.mean ~ Uniform(-5, 5)
+        g.sigma ~ Uniform(0.1, 10)
+    end
     x = collect(-2.0:0.5:2.0)
     y = render(cm, x)
-    u = params(cm)
+    u = AstroFit.params(cm)
 
     f = ObjectiveFunction(cm, x, y) # default statistic = chi2
     @test LogDensityProblems.logdensity(f, u) == logposterior(f, u)
