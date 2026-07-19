@@ -24,6 +24,15 @@ _setleaf(l::Leaf, ::Val, _) = l
 _setleaf(node, v::Val, new) =
     constructorof(typeof(node))(_setleaf(node.left, v, new), _setleaf(node.right, v, new))
 
+# Reset every leaf's constraints to all-Free, keeping model values and priors.
+# @constrain calls this first so a block always states the model's full constraint
+# state, rather than patching whatever a previous call left behind.
+resetconstraints(cm::CompiledModel) =
+    CompiledModel(_resetnode(getfield(cm, :tree)), getfield(cm, :priors))
+
+_resetnode(l::Leaf{n}) where {n} = Leaf{n}(l.model, _defaults(l.model))
+_resetnode(node) = constructorof(typeof(node))(_resetnode(node.left), _resetnode(node.right))
+
 # validate(cm): every Tied master must be a free parameter (Free/Bounded) — no chaining,
 # no tie to a fixed/missing slot. Subsumes cycle detection (a tie can't reach another tie).
 # Returns cm so it chains. Throws on the first offending tie.

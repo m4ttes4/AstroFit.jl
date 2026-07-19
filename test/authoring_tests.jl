@@ -200,11 +200,9 @@ end
     )(cm)
 
     fixed = cm
-    @constrain fixed begin
-        a.sigma = 1.0
-    end
     @test_throws ArgumentError (
         m -> @constrain m begin
+            a.sigma = 1.0
             b.sigma -> a.sigma
         end
     )(fixed)

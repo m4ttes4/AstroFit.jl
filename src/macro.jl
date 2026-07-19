@@ -261,6 +261,11 @@ mirrors its standalone macro ([`@fix`](@ref), [`@tie`](@ref), [`@bound`](@ref),
 block (except for priors, which are orthogonal to constraints). The model variable is
 automatically rebound after validation.
 
+The block states the model's full constraint set: every field not mentioned is reset
+to [`Free`](@ref) first, so re-running an edited block (e.g. in the REPL, with a line
+commented out) never leaves a stale constraint behind. Priors are untouched by the
+reset — they persist across blocks until overwritten by target.
+
 # Examples
 ```julia
 @constrain m begin
@@ -291,7 +296,7 @@ macro constrain(cm, blk)
     blk isa Expr && blk.head === :block || error("@constrain expects a begin…end block")
     cm isa Symbol || error("@constrain: first argument must be a variable name")
     g = gensym(:cm); seen = Set{Tuple{Symbol, Symbol}}()
-    out = Any[:($g = $(esc(cm)))]
+    out = Any[:($g = resetconstraints($(esc(cm))))]
     for s in blk.args
         s isa LineNumberNode && continue
 

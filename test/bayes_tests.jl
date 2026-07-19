@@ -56,21 +56,17 @@ end
     end
 
     fixed = cm
-    @constrain fixed begin
-        a.sigma
-    end
     @test_throws ArgumentError (
         m -> @constrain m begin
+            a.sigma
             a.sigma ~ LogNormal(0.0, 1.0)
         end
     )(fixed)
 
     tied = cm
-    @constrain tied begin
-        b.sigma -> a.sigma
-    end
     @test_throws ArgumentError (
         m -> @constrain m begin
+            b.sigma -> a.sigma
             b.sigma ~ LogNormal(0.0, 1.0)
         end
     )(tied)
