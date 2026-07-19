@@ -289,6 +289,27 @@ formula: bg + line_a + line_b
 > Constraining the same parameter twice in one block is a compile-time error,
 > no silent overwrites.
 
+### Tie expressions
+
+The right-hand side of a tie is not limited to another parameter. It can be
+any Julia expression: every `leaf.field` path it references becomes a master
+parameter, and everything else — arithmetic, function calls, including
+functions you wrote yourself — is kept as-is and evaluated when `withparams`
+rebuilds the model:
+
+```julia
+blend(a1, a2) = 0.5 * (a1 + a2)   # any user-defined function works
+
+@constrain spec begin
+    line_b.sigma     -> line_a.sigma                           # share the same value
+    line_b.mean      -> line_a.mean + 98.0                     # numeric relation
+    line_b.amplitude -> blend(line_a.amplitude, bg.intercept)  # user function, several masters
+end
+```
+
+However many masters a tie references, they must all be free or bounded
+parameters, and the tied parameter still consumes no optimizer slot.
+
 ### Standalone constraint macros
 
 For quick one-off edits outside a block, each macro targets one parameter
@@ -339,11 +360,13 @@ model = withparams(spec, params(spec))
 ```
 
 `withparams` scatters the flat parameter vector into the free positions,
-re-resolves all tied parameters, and returns the **bare** model tree (Leaf
-wrappers stripped). This is the function you call inside the fitting loop.
+re-resolves all tied parameters, and returns a new `CompiledModel` with the
+updated values (constraints and priors carried over), so the result is
+navigable (`model.line_a.model`), renderable, and re-fittable just like the
+original. This is the function you call inside the fitting loop.
 
 For example, if `line_b.sigma -> line_a.sigma`, the optimizer never sees a
-separate `line_b_sigma` slot. `withparams` rebuilds a plain model where that
+separate `line_b_sigma` slot. `withparams` rebuilds a model where that
 field has already been computed from `line_a_sigma`, so `render` does not
 need to know about constraints.
 
@@ -1031,7 +1054,7 @@ The generated function does two compile-time passes over the tree type:
 
 1. Build a slot map:
    `(:ha, :amplitude) => 3`, `(:ha, :sigma) => 4`, and so on.
-2. Emit reconstruction code for the bare model tree:
+2. Emit reconstruction code for the rebuilt model tree:
    - `Free` / `Bounded` fields become `p[k]`.
    - `Fixed` fields read the stored fixed value.
    - `Tied` fields call their stored function on the master slots.
@@ -1064,8 +1087,9 @@ Gaussian1D(2.96 * p[k_n6548_amp], ...)
 ```
 
 There is no runtime dictionary lookup, name resolution, or constraint dispatch
-inside the fit loop. `withparams` returns the bare compound model tree, with
-`Leaf` wrappers stripped, so the next call is normal Julia dispatch:
+inside the fit loop. `withparams` returns a new `CompiledModel` with the
+rebuilt tree (all constraint resolution already done), so the next call is
+normal Julia dispatch:
 
 ```julia
 render(withparams(spec, p), x)
