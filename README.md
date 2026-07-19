@@ -47,6 +47,7 @@ Pkg.add(url="https://github.com/m4ttes4/AstroFit.jl")
 - [Working With Parameters](#working-with-parameters)
 - [Fitting](#fitting)
 - [Optimization.jl Integration](#optimizationjl-integration)
+- [Bayesian Sampling](#bayesian-sampling)
 - [Future Progress](#future-progress)
 - [Benchmarks](#benchmarks)
 - [Real Examples](#real-examples)
@@ -281,6 +282,10 @@ formula: bg + line_a + line_b
 ```
 
 > [!NOTE]
+> A `@constrain` block states the model's **full** constraint set: every
+> parameter not mentioned is reset to `Free` first, so re-running an edited
+> block (e.g. in the REPL) never leaves a stale constraint behind. Priors are
+> exempt from the reset — they persist across blocks until overwritten.
 > Constraining the same parameter twice in one block is a compile-time error,
 > no silent overwrites.
 
@@ -294,6 +299,7 @@ and automatically rebinds the model variable:
 @bound spec.line_a.amplitude in (0, Inf)                   # set bounds
 @tie   spec.line_b.sigma -> spec.line_a.sigma              # tie to another parameter
 @free  spec.line_a.mean                                    # release back to free
+@prior spec.line_a.sigma ~ LogNormal(0.0, 0.5)             # attach a Bayesian prior
 ```
 
 Note: standalone macros use the full path (`spec.line_a.field`), while
@@ -346,13 +352,16 @@ need to know about constraints.
 ## Fitting
 
 AstroFit provides a built-in likelihood layer through `ObjectiveFunction`, which
-powers the package extensions for Optimization.jl, You can also write a plain loss function by hand.
+powers the package extensions for Optimization.jl and the
+[Bayesian sampling](#bayesian-sampling) layer. You can also write a plain loss
+function by hand.
 
 ### ObjectiveFunction
 
 `ObjectiveFunction(cm, x, y, err; statistic)` bundles a model with data. The
-default statistic is `:chi2`; other options are `:negloglikelihood`,
-`:logposterior`, and `:neglogposterior`.
+default statistic is `chi2`; other options are `loglikelihood`,
+`negloglikelihood`, `logposterior`, and `neglogposterior` (plain functions, all
+exported).
 
 ```julia
 λ   = collect(6540.0:0.5:6590.0)
@@ -371,10 +380,11 @@ using ForwardDiff
 ForwardDiff.gradient(obj, params(spec))
 ```
 
-For Bayesian sampling, use a log-density statistic:
+For Bayesian sampling, use a log-density statistic (see
+[Bayesian Sampling](#bayesian-sampling)):
 
 ```julia
-obj_bayes = ObjectiveFunction(spec, λ, y, err; statistic = :neglogposterior)
+obj_bayes = ObjectiveFunction(spec, λ, y, err; statistic = logposterior)
 ```
 
 ### Statistics as functions
@@ -458,38 +468,100 @@ If you need to control the AD backend or build the problem manually, use
 `OptimizationFunction` instead:
 
 ```julia
-optf = OptimizationFunction(spec, λ, y; adtype = AutoForwardDiff())
-prob = OptimizationProblem(optf, params(spec); lb, ub)
+optf   = OptimizationFunction(spec, λ, y; adtype = AutoForwardDiff())
+lb, ub = bounds(spec)
+prob   = OptimizationProblem(optf, params(spec); lb, ub)
 ```
 
 
-## Future Progress
+## Bayesian Sampling
 
-### Bayesian sampling
+Bayesian analysis does not require a different model layer. Mechanical
+constraints (fixes, ties, bounds) reduce the dimensionality as usual, and
+priors attached with `~` turn the likelihood into a posterior. The same flat
+parameter vector the optimizer sees is what the sampler sees.
 
-Bayesian analysis is a natural next step for AstroFit, and it should not require
-a different model layer. The core pieces are already present: parameters are a
-flat vector, `loglikelihood` and `logposterior` work on that vector, and priors
-are already supported through `Distributions.jl` objects:
+### Priors
+
+Priors are ordinary `Distributions.jl` objects, attached in `@constrain` with
+`~`, or one at a time with the standalone `@prior` macro. They apply to free
+parameters only — a tied or fixed parameter has no slot, so it needs no prior:
 
 ```julia
 using Distributions
 
 @constrain spec begin
-    line.sigma ~ LogNormal(0.0, 0.5)
+    line.amplitude ~ Uniform(0.0, 15.0)
+    line.sigma     ~ truncated(LogNormal(0.0, 0.5); lower = 0.1)
 end
+
+# equivalent one-off form (full path, like the other standalone macros):
+# @prior spec.line.sigma ~ truncated(LogNormal(0.0, 0.5); lower = 0.1)
 ```
 
-What is still missing is integration glue for samplers. The plan is to
-implement the [LogDensityProblems.jl](https://github.com/tpapp/LogDensityProblems.jl)
-interface as a package extension. It is the standard Julia abstraction for
-log-density targets, and most MCMC samplers already accept it (AdvancedHMC.jl,
-DynamicHMC.jl, Pigeons.jl). Once that extension exists, any sampler
-that speaks LogDensityProblems should works with AstroFit models out of the box.
+The Bayesian entry point is `logposterior = loglikelihood + logprior`, already
+available as a statistic:
+
+```julia
+obj = ObjectiveFunction(spec, λ, y, err; statistic = logposterior)
+```
+
+Note that the log-density does **not** auto-reject out-of-support points: if a
+parameter must stay in a range, use a bounded prior (`Uniform`,
+`truncated(...)`) so the posterior is `-Inf` outside it.
+
+> [!IMPORTANT]
+> Priors are all-or-nothing: as soon as the model has one prior, building an
+> `ObjectiveFunction` from it requires **every** free parameter to have one,
+> and throws at construction time otherwise. There is no implicit fallback —
+> bounds are not priors, and a missing prior never silently contributes 0.
+
+### Sampling via LogDensityProblems
+
+An `ObjectiveFunction` implements the
+[LogDensityProblems.jl](https://github.com/tpapp/LogDensityProblems.jl)
+interface, the standard Julia abstraction for log-density targets. Any sampler
+that accepts a LogDensityProblems target should therefore be compatible —
+AdvancedHMC.jl, DynamicHMC.jl, Pigeons.jl, and the rest of that ecosystem.
+NUTS is shown here as the reference example.
+
+[AdvancedHMC.jl](https://github.com/TuringLang/AdvancedHMC.jl) provides NUTS.
+Being gradient-based, it needs the target wrapped with an AD backend via
+[LogDensityProblemsAD.jl](https://github.com/tpapp/LogDensityProblemsAD.jl):
+
+```julia
+using AdvancedHMC, AbstractMCMC, LogDensityProblemsAD, ForwardDiff
+
+ℓ = ADgradient(:ForwardDiff, obj)
+chain = AbstractMCMC.sample(
+    AbstractMCMC.LogDensityModel(ℓ), NUTS(0.8), 1500;
+    n_adapts = 500, discard_initial = 500, initial_params = params(spec),
+)
+```
+
+[Pigeons.jl](https://github.com/Julia-Tempering/Pigeons.jl) (parallel
+tempering) additionally has its own AstroFit extension: when both packages are
+loaded, the chain initialization and the reference distribution are derived
+from the model's priors, and the objective is the target as-is:
+
+```julia
+using Pigeons
+
+pt      = pigeons(target = obj, record = [traces; record_default()])
+samples = sample_array(pt)     # (samples, params + logdensity, chains)
+```
+
+The resulting chains are plain sample arrays, so the usual MCMC ecosystem
+applies: MCMCChains.jl for summaries and diagnostics (pass
+`chain_type = Chains, param_names = string.(paramnames(spec))` to `sample` to
+get a `Chains` object directly), PairPlots.jl for corner plots, and so on.
+
+
+## Future Progress
 
 ### A `@component` macro for defining models
 
-The other thing I want to add is a macro for defining new model components. Right
+The main thing I want to add is a macro for defining new model components. Right
 now, bringing your own model means writing the full boilerplate by hand: the
 `@kwdef struct`, a `promote` constructor, and a `render` method (see
 [Extending AstroFit](#extending-astrofit)). It is not hard, but it is the same
@@ -610,7 +682,7 @@ Full working scripts are in the [`examples/`](examples/) directory.
 
 Two emission lines on a sloped continuum, fitted to synthetic noisy data. The
 second Gaussian's width and amplitude are tied to the first (`g2.sigma = g1.sigma`,
-`g2.amplitude = 0.5 * g1.amplitude`), reducing 9 model parameters to 6 free ones.
+`g2.amplitude = 0.5 * g1.amplitude`), reducing 8 model parameters to 6 free ones.
 
 ```julia
 cm = @model begin
