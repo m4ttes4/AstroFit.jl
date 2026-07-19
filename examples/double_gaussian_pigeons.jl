@@ -40,18 +40,11 @@ cm = @model begin
 end
 
 @constrain cm begin
-    cont.slope in (-0.1, 0.1)
-    cont.intercept in (0.0, 2.0)
-    g1.amplitude in (0.0, 15.0)
-    g1.mean in (3.5, 6.5)
-    g1.sigma in (0.2, 1.5)
-    g2.mean in (6.0, 9.0)
-    # g2 width tied to g1 width (same instrument resolution)
+    
     g2.sigma -> g1.sigma
     # g2 amplitude tied to half of g1
     g2.amplitude -> 0.5 * g1.amplitude
-    # logposterior no longer auto-rejects out-of-bounds points — priors below
-    # are what give -Inf outside the box (Pigeons needs this hard boundary)
+
     cont.slope ~ Uniform(-0.1, 0.1)
     cont.intercept ~ Uniform(0.0, 2.0)
     g1.amplitude ~ Uniform(0.0, 15.0)
@@ -66,7 +59,7 @@ end
 target = ObjectiveFunction(cm, x, y, err; statistic = logposterior)
 pt = pigeons(
     target = target,
-    n_rounds = 10,
+    n_rounds = 8,
     n_chains = 8,
     # seed = 123,
     record = [traces; record_default()],
