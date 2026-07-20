@@ -510,6 +510,105 @@ end
     end
 end
 
+@testitem "kernel: heterogeneous fields survive reconstruction" tags = [:kernel] begin
+    using AstroFit
+    using ForwardDiff
+
+    # An edge policy is a Symbol: nothing to promote against a number.
+    struct EdgePSF{T <: Real} <: AbstractKernel
+        sigma::T
+        edge::Symbol
+    end
+    AstroFit.render(k::EdgePSF, ys::AbstractVector) = k.sigma .* ys
+
+    cm = @model begin
+        l = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.0)
+        psf = EdgePSF(1.5, :clamp)
+        l |> psf
+    end
+    @test withparams(cm, [3.0, 0.5, 1.2]).psf.model.edge === :clamp
+
+    free = @free cm.psf.sigma
+    dual = withparams(free, ForwardDiff.Dual.(params(free), 1.0))
+    @test dual.psf.model.edge === :clamp
+    @test dual.psf.model.sigma isa ForwardDiff.Dual
+
+    # A concrete Int beside a parametric Float: the Int must NOT be promoted,
+    # or the constructor stops matching (and under AD it would become a Dual).
+    struct IntPSF{T <: Real} <: AbstractKernel
+        halfwidth::Int
+        sigma::T
+    end
+    AstroFit.render(k::IntPSF, ys::AbstractVector) = k.sigma .* ys
+
+    cmi = @model begin
+        l = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.0)
+        psf = IntPSF(3, 1.5)
+        l |> psf
+    end
+    rebuilt = withparams(cmi, [3.0, 0.5, 1.2]).psf.model
+    @test rebuilt.halfwidth === 3            # still an Int, still 3
+    @test rebuilt.sigma === 1.5
+
+    freei = @free cmi.psf.sigma
+    duali = withparams(freei, ForwardDiff.Dual.(params(freei), 1.0)).psf.model
+    @test duali.halfwidth === 3              # the Dual did not reach it
+    @test duali.sigma isa ForwardDiff.Dual
+end
+
+@testitem "kernel: many fields of many types" tags = [:kernel] begin
+    using AstroFit
+    using ForwardDiff
+
+    # Two fields share T; every other field is its own thing. Promoting all of
+    # them together, or every `<:Number` among them, breaks reconstruction.
+    struct BigPSF{T <: Real, V <: AbstractVector, M <: AbstractMatrix, F} <: AbstractKernel
+        sigma::T
+        scale::T
+        taps::V
+        weights::M
+        apodize::F
+        edge::Symbol
+        normalize::Bool
+        order::Int
+        label::String
+        span::Tuple{Int, Int}
+    end
+    AstroFit.render(k::BigPSF, ys::AbstractVector) = k.scale .* ys
+
+    cm = @model begin
+        l = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.0)
+        psf = BigPSF(
+            1.5, 2.0, [0.25, 0.5, 0.25], [1.0 0.0; 0.0 1.0],
+            abs, :clamp, true, 2, "measured-2024", (1, 5)
+        )
+        l |> psf
+    end
+
+    @test nfree(cm) == 3                      # every kernel field is Fixed
+    @test size(render(cm, collect(-2.0:0.5:2.0))) == (9,)
+
+    m = withparams(cm, [3.0, 0.5, 1.2]).psf.model
+    @test m.sigma === 1.5 && m.scale === 2.0
+    @test m.taps == [0.25, 0.5, 0.25]
+    @test m.weights == [1.0 0.0; 0.0 1.0]
+    @test m.apodize === abs
+    @test m.edge === :clamp
+    @test m.normalize === true                # Bool <: Number, must stay a Bool
+    @test m.order === 2                       # Int, must stay an Int
+    @test m.label == "measured-2024"
+    @test m.span === (1, 5)
+
+    # free one of the two linked fields: both lift, nothing else does
+    free = @free cm.psf.sigma
+    d = withparams(free, ForwardDiff.Dual.(params(free), 1.0)).psf.model
+    @test d.sigma isa ForwardDiff.Dual
+    @test d.scale isa ForwardDiff.Dual         # shares T with sigma
+    @test d.taps isa Vector{Float64}           # its own parameter
+    @test d.order === 2
+    @test d.normalize === true
+end
+
 @testitem "kernel: errors and display" tags = [:kernel] begin
     using AstroFit
 

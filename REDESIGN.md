@@ -9,7 +9,7 @@ the code looked like before, what it looks like now, and what the difference
 buys. The design conversation that led here is in [KERNELS.md](KERNELS.md); the
 individual decisions are in [ADR-0001..0004](docs/adr/).
 
-**Scope of the change**: 6 files modified, 3 added, ~280 lines. 261 tests pass.
+**Scope of the change**: 6 files modified, 3 added, ~300 lines. 284 tests pass.
 The pointwise path is byte-identical in behaviour and identical in measured
 performance.
 
@@ -402,7 +402,7 @@ is what actually distinguishes correct code from broken code.
 
 ### Coverage
 
-261 tests pass, 83 of them new in
+284 tests pass, 106 of them new in
 [test/kernel_tests.jl](test/kernel_tests.jl): user-defined kernels, the full
 composition matrix, trait propagation, the allocation gate, `render!` on both
 paths, PSF normalization and flat-signal conservation, `Fixed`-by-default and
@@ -443,20 +443,46 @@ Reconstructing that leaf threw:
 promotion of types Vector{Float64} and Float64 failed to change any arguments
 ```
 
-The fix reads which fields are numeric from the model type at code-generation
-time, and promotes only those:
+The first fix — promote only the `<:Number` fields — was wrong, and a second
+round of probing caught it. `Int <: Number`, so a concretely-typed
+`halfwidth::Int` got promoted to `Float64` and the constructor stopped matching;
+under AD it became a `Dual` and `Bool` fields degraded the same way.
+
+The right question is not "is this field a number?" but **"is this field
+required to agree with another one?"** — and that is answered by the struct
+declaration: fields typed with the same type parameter must agree, everything
+else must not be touched. Grouping by *which* parameter is essential rather than
+pedantic, because a parametric array field is a type variable too:
 
 ```julia
-function _ctorexpr(M, fields)
-    num = findall(F -> F <: Number, collect(fieldtypes(M)))
-    length(num) == fieldcount(M) && return :($ctor(promote($(fields...))...))   # unchanged
-    length(num) <= 1 && return :($ctor($(fields...)))
-    # mixed: promote the numeric fields among themselves, splice back in place
+struct BigPSF{T <: Real, V <: AbstractVector} <: AbstractKernel
+    sigma::T          # ─┐ same parameter: promoted together
+    scale::T          # ─┘
+    taps::V           # also a type variable — but its own; promoting it
+                      #   against sigma throws
+    halfwidth::Int    # concrete — promoting it breaks the constructor
+    edge::Symbol      # nothing to promote at all
 end
 ```
 
-The all-numeric branch emits the *same expression as before*, so every existing
-model is unaffected and the benchmark gate still reads 0 allocations and
+So `_ctorexpr` reads the declared field types from the *generic* struct
+(`Gaussian1D` says `T`; the instance `Gaussian1D{Float64}` says `Float64`, which
+is exactly the information that gets lost), groups the type-variable fields by
+identity, and promotes within each group:
+
+```julia
+decl = Base.unwrap_unionall(M.name.wrapper).types
+groups = ...                                    # field indices, keyed by TypeVar
+linked = [g for g in values(groups) if length(g) > 1]
+
+isempty(linked) && return :($ctor($(fields...)))
+length(linked) == 1 && length(linked[1]) == fieldcount(M) &&
+    return :($ctor(promote($(fields...))...))   # unchanged: the whole zoo
+```
+
+The last branch is the whole existing zoo — one group covering every field —
+and it emits the *same expression as before*, so every existing model is
+unaffected and the benchmark gate still reads 0 allocations and
 3828.125 ns. The observable result on a mixed leaf is that a dual number lifts
 only what it should:
 
@@ -465,6 +491,10 @@ withparams(cm, ForwardDiff.Dual.(p, 1.0)).psf.model
 # ScaledPSF{Vector{Float64}, ForwardDiff.Dual{Nothing, Float64, 1}}
 #           ^ array untouched  ^ scalar lifted
 ```
+
+and on a ten-field kernel carrying a `Symbol` edge policy, a `Bool`, an `Int`
+order, a `String` label, a function and a `Tuple`, only the two fields sharing
+`T` lift; the `Int` stays an `Int` and the `Bool` stays a `Bool`.
 
 A 2D instrumental PSF — one whose field is the intensity *matrix* — works
 through the same path, convolving the rendered image:
@@ -520,7 +550,7 @@ add when a real fit needs one).
 | [src/fit/loss.jl](src/fit/loss.jl) | `chi2` dispatches on style; scalar loop renamed `_chi2p`, otherwise untouched; `_checkpred` |
 | [src/withparams.jl](src/withparams.jl) | `_ctorexpr` — promote only the numeric fields (§9); the all-numeric case emits the previous expression verbatim |
 | [src/zoo/kernels.jl](src/zoo/kernels.jl) | **new** — `GaussianPSF` |
-| [test/kernel_tests.jl](test/kernel_tests.jl) | **new** — 16 test items, 83 assertions |
+| [test/kernel_tests.jl](test/kernel_tests.jl) | **new** — 18 test items, 106 assertions |
 | [README.md](README.md) | "Kernels and PSF Convolution" section |
 
 Untouched: `params.jl`, `constrain.jl`, `constraints.jl`, `priors.jl`,

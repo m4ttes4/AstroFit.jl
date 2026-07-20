@@ -56,36 +56,62 @@ end
 Build the constructor call that rebuilds one leaf model of type `M` from the
 per-field expressions `fields`.
 
-Numeric fields are `promote`d together so that a dual number in one slot lifts
-the others — without it a `Gaussian1D{T<:Real}` holding one `Dual` and two
-`Float64`s could not be constructed, which is what makes ForwardDiff work.
+Fields sharing a type parameter are `promote`d together, so a dual number in one
+slot lifts its siblings — without it a `Gaussian1D{T<:Real}` holding one `Dual`
+and two `Float64`s could not be constructed, which is what makes ForwardDiff
+work.
 
-Non-numeric fields are passed through untouched. A model may legitimately hold
-something that has nothing to promote against a number — a measured
-instrumental PSF whose field is the sampled kernel array being the motivating
-case. Promoting those blindly throws
-`promotion of types Vector{Float64} and Float64 failed to change any arguments`.
+The grouping is by *which* type parameter, read from the struct declaration at
+compile time, and every other field is passed through untouched. Both halves
+matter once a model holds something other than plain numbers — a measured
+instrumental PSF is the motivating case:
 
-Which fields are numeric is read from `M` at compile time, so the all-numeric
-case (every model in the zoo) emits exactly the same `promote(...)` call as
-before and costs nothing.
+```julia
+struct BigPSF{T <: Real, V <: AbstractVector} <: AbstractKernel
+    sigma::T          # ─┐ promoted together: they must agree
+    scale::T          # ─┘
+    taps::V           # its own parameter — promoting it against sigma would throw
+    halfwidth::Int    # concrete — promoting it to Float64 breaks the constructor
+    edge::Symbol      # nothing to promote at all
+end
+```
+
+Promoting everything together throws
+`promotion of types Vector{Float64} and Float64 failed to change any arguments`;
+promoting every `<:Number` field turns `halfwidth` into a `Float64` (and, under
+AD, into a `Dual`) and the constructor no longer matches.
+
+When one group covers every field — every model in the zoo — the emitted
+expression is exactly the `promote(...)` call this function replaced, so the
+common path costs nothing.
 """
 function _ctorexpr(M, fields)
     ctor = constructorof(M)
-    num = findall(F -> F <: Number, collect(fieldtypes(M)))
-    length(num) == fieldcount(M) && return :($ctor(promote($(fields...))...))
-    length(num) <= 1 && return :($ctor($(fields...)))
 
-    # Mixed: promote the numeric fields among themselves, splice them back in place.
-    pr = gensym(:promoted)
+    # Declared field types, from the generic struct rather than this instance:
+    # `Gaussian1D{Float64}` says `Float64`, `Gaussian1D` says `T`, and only the
+    # latter tells us which fields are required to agree.
+    decl = Base.unwrap_unionall(M.name.wrapper).types
+    groups = Dict{Any, Vector{Int}}()
+    for (i, F) in enumerate(decl)
+        F isa TypeVar && push!(get!(groups, F, Int[]), i)
+    end
+    linked = [g for g in values(groups) if length(g) > 1]
+
+    isempty(linked) && return :($ctor($(fields...)))
+    length(linked) == 1 && length(linked[1]) == fieldcount(M) &&
+        return :($ctor(promote($(fields...))...))
+
     args = copy(fields)
-    for (k, i) in enumerate(num)
-        args[i] = :($pr[$k])
+    pre = Expr[]
+    for g in linked
+        pr = gensym(:promoted)
+        push!(pre, :($pr = promote($(fields[g]...))))
+        for (k, i) in enumerate(g)
+            args[i] = :($pr[$k])
+        end
     end
-    return quote
-        $pr = promote($(fields[num]...))
-        $ctor($(args...))
-    end
+    return Expr(:block, pre..., :($ctor($(args...))))
 end
 
 """
