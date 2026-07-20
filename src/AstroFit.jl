@@ -17,7 +17,7 @@ include("show.jl")
 
 export AbstractModel
 export Gaussian1D, Const1D, Linear1D, Lorentzian1D, Voigt1D
-export PowerLaw1D, BlackBody1D, BrokenPowerLaw1D, Exponential1D
+export PowerLaw1D, BlackBody1D, BrokenPowerLaw1D, Exponential1D, Redshift1D
 export Gaussian2D, Sersic2D, Moffat2D, Beta2D
 export AbstractConstraint, Free, Fixed, Bounded, Tied
 export CompiledModel, withparams, params, nfree, bounds, paramnames

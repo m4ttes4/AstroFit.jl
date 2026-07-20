@@ -77,6 +77,28 @@ end
     @test render(spectrum, 6563.0) > continuum_at_center
 end
 
+@testitem "zoo-style Redshift1D warps a shared spectral axis for multiple lines" tags = [:zoo] begin
+    using AstroFit
+
+    spectrum = @model begin
+        z = Redshift1D(z = 0.0)
+        line1 = Gaussian1D(amplitude = 1.0, mean = 6563.0, sigma = 2.0)
+        line2 = Gaussian1D(amplitude = 0.5, mean = 4861.0, sigma = 2.0)
+        z |> (line1 + line2)
+    end
+
+    @test paramnames(spectrum) ==
+        [:z_z, :line1_amplitude, :line1_mean, :line1_sigma, :line2_amplitude, :line2_mean, :line2_sigma]
+
+    @test render(spectrum, 6563.0) ≈ render(Gaussian1D(amplitude = 1.0, mean = 6563.0, sigma = 2.0), 6563.0) +
+        render(Gaussian1D(amplitude = 0.5, mean = 4861.0, sigma = 2.0), 6563.0)
+
+    shifted = withparams(spectrum, [1.0, 1.0, 6563.0, 2.0, 0.5, 4861.0, 2.0])
+    observed_center = 6563.0 * 2.0
+    @test render(shifted, observed_center) ≈ render(Gaussian1D(amplitude = 1.0, mean = 6563.0, sigma = 2.0), 6563.0) +
+        render(Gaussian1D(amplitude = 0.5, mean = 4861.0, sigma = 2.0), observed_center / 2.0)
+end
+
 @testitem "zoo-style 2D line profiles render and constrain physical params" tags = [:zoo, :twod] begin
     using AstroFit
 

@@ -24,7 +24,7 @@ Base.@kwdef struct Const1D{T <: Real} <: AbstractModel
     value::T = 0.0
 end
 
-render(m::Const1D, x::Number) = m.value
+render(m::Const1D, ::Number) = m.value
 
 function render!(out::AbstractArray, m::Const1D, xs::AbstractArray)
     @inbounds for i in eachindex(out, xs)
@@ -185,6 +185,23 @@ render(m::Exponential1D, x::Number) = m.amplitude * exp(-x / m.tau)
 function render!(out::AbstractArray, m::Exponential1D, xs::AbstractArray)
     @inbounds for i in eachindex(out, xs)
         out[i] = m.amplitude * exp(-xs[i] / m.tau)
+    end
+    return out
+end
+
+
+# Coordinate-only transform: no amplitude, just warps x before an inner model
+# renders it. Compose via Pipe (`z |> line`), not by embedding it inside
+# another leaf's constructor — see zoo_tests.jl for the single-leaf-per-`@model`-line rule.
+Base.@kwdef struct Redshift1D{T <: Real} <: AbstractModel
+    z::T = 0.0
+end
+
+render(m::Redshift1D, x::Number) = x / (1 + m.z)
+
+function render!(out::AbstractArray, m::Redshift1D, xs::AbstractArray)
+    @inbounds for i in eachindex(out, xs)
+        out[i] = xs[i] / (1 + m.z)
     end
     return out
 end
