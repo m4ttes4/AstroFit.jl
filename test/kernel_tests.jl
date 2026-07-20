@@ -306,6 +306,83 @@ end
     @test isfinite(lp(AstroFit.params(prior)))
 end
 
+@testitem "kernel: Bayesian targets and posterior gradients" tags = [:kernel] begin
+    using AstroFit
+    using Distributions, LogDensityProblems, ForwardDiff
+
+    x = collect(-6.0:0.3:6.0)
+    cm = @model begin
+        line = Gaussian1D(amplitude = 2.0, mean = 0.5, sigma = 1.0)
+        cont = Const1D(value = 0.4)
+        psf = GaussianPSF(sigma = 1.4)      # off the 4σ∈ℤ truncation boundary
+        (line |> psf) + cont
+    end
+    y = render(cm, x)
+    err = fill(0.05, length(y))
+    cm = @constrain cm begin
+        line.amplitude ~ truncated(Normal(2.0, 1.0); lower = 0.0)
+        line.mean ~ Normal(0.5, 1.0)
+        line.sigma ~ truncated(Normal(1.0, 0.5); lower = 0.01)
+        cont.value ~ Normal(0.4, 0.5)
+    end
+
+    f = ObjectiveFunction(cm, x, y, err; statistic = AstroFit.logposterior)
+    p = AstroFit.params(cm)
+
+    # the LogDensityProblems target routes through the kernel chi2
+    @test isfinite(f(p))
+    @test LogDensityProblems.logdensity(f, p) == f(p)
+    @test LogDensityProblems.dimension(f) == 4     # the PSF width is not a slot
+
+    # the posterior is differentiable through the convolution
+    g = ForwardDiff.gradient(f, p)
+    @test all(isfinite, g)
+    h = 1.0e-6
+    for i in eachindex(p)
+        step = zeros(length(p)); step[i] = h
+        @test g[i] ≈ (f(p .+ step) - f(p .- step)) / (2h) rtol = 1.0e-5
+    end
+
+    # and with the PSF width itself free — a Dual reaching the kernel's own math
+    free = @free cm.psf.sigma
+    free = @prior free.psf.sigma ~ truncated(Normal(1.4, 0.3); lower = 0.1)
+    ff = ObjectiveFunction(free, x, y, err; statistic = AstroFit.logposterior)
+    pf = AstroFit.params(free)
+    gf = ForwardDiff.gradient(ff, pf)
+    @test all(isfinite, gf)
+    for i in eachindex(pf)
+        step = zeros(length(pf)); step[i] = h
+        @test gf[i] ≈ (ff(pf .+ step) - ff(pf .- step)) / (2h) rtol = 1.0e-4
+    end
+end
+
+@testitem "kernel: Pigeons adapter accepts a kernel model" tags = [:kernel] begin
+    using AstroFit
+    using Distributions, Pigeons, Random
+
+    x = collect(-6.0:0.5:6.0)
+    cm = @model begin
+        line = Gaussian1D(amplitude = 2.0, mean = 0.5, sigma = 1.0)
+        cont = Const1D(value = 0.4)
+        psf = GaussianPSF(sigma = 1.4)
+        (line |> psf) + cont
+    end
+    y = render(cm, x)
+    cm = @constrain cm begin
+        line.amplitude ~ truncated(Normal(2.0, 1.0); lower = 0.0)
+        line.mean ~ Normal(0.5, 1.0)
+        line.sigma ~ truncated(Normal(1.0, 0.5); lower = 0.01)
+        cont.value ~ Normal(0.4, 0.5)
+    end
+    f = ObjectiveFunction(cm, x, y, fill(0.05, length(y)); statistic = AstroFit.logposterior)
+
+    init = Pigeons.initialization(f, Random.default_rng(), 1)
+    @test length(init) == 4                  # the fixed PSF width contributes no slot
+    @test all(isfinite, init)
+    @test isfinite(f(init))                  # the drawn point evaluates through the kernel
+    @test Pigeons.default_reference(f) isa Pigeons.DistributionLogPotential
+end
+
 @testitem "kernel: errors and display" tags = [:kernel] begin
     using AstroFit
 

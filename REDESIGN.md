@@ -9,7 +9,7 @@ the code looked like before, what it looks like now, and what the difference
 buys. The design conversation that led here is in [KERNELS.md](KERNELS.md); the
 individual decisions are in [ADR-0001..0004](docs/adr/).
 
-**Scope of the change**: 5 files modified, 3 added, ~230 lines. 222 tests pass.
+**Scope of the change**: 5 files modified, 3 added, ~230 lines. 240 tests pass.
 The pointwise path is byte-identical in behaviour and identical in measured
 performance.
 
@@ -310,8 +310,15 @@ way: no exception, a fit that converges to nonsense. This is the class of bug
 worth spending three lines on.
 
 **Nothing in `ext/` needed changing.** `loglikelihood` is `-0.5 * chi2 + const`
-and `logposterior` adds the prior sum, so both inherit the split for free. That
-was verified by test, not by inspection.
+and `logposterior` adds the prior sum, so every Bayesian entry point inherits
+the split for free. Verified by test rather than by inspection, across all three
+extensions: `logposterior`, the LogDensityProblems target
+(`logdensity`/`dimension`), gradients of the log-posterior against finite
+differences (including a free PSF width), and the Pigeons adapter's
+initialization and reference distribution. A full Pigeons run on a
+`(line |> psf) + cont` model recovers the generating parameters
+(`[2.034, 0.505, 0.970, 0.396]` against a truth of `[2.0, 0.5, 1.0, 0.4]`); the
+sampling run itself is not in the suite, only the adapter surface.
 
 ## 7. Kernel fields default to Fixed
 
@@ -395,7 +402,7 @@ is what actually distinguishes correct code from broken code.
 
 ### Coverage
 
-222 tests pass, 44 of them new in
+240 tests pass, 62 of them new in
 [test/kernel_tests.jl](test/kernel_tests.jl): user-defined kernels, the full
 composition matrix, trait propagation, the allocation gate, `render!` on both
 paths, PSF normalization and flat-signal conservation, `Fixed`-by-default and
@@ -439,7 +446,7 @@ add when a real fit needs one).
 | [src/macro.jl](src/macro.jl) | `_defaults(::AbstractKernel)` → all `Fixed` |
 | [src/fit/loss.jl](src/fit/loss.jl) | `chi2` dispatches on style; scalar loop renamed `_chi2p`, otherwise untouched; `_checkpred` |
 | [src/zoo/kernels.jl](src/zoo/kernels.jl) | **new** — `GaussianPSF` |
-| [test/kernel_tests.jl](test/kernel_tests.jl) | **new** — 12 test items, 44 assertions |
+| [test/kernel_tests.jl](test/kernel_tests.jl) | **new** — 14 test items, 62 assertions |
 | [README.md](README.md) | "Kernels and PSF Convolution" section |
 
 Untouched, and that is the point: `withparams.jl`, `params.jl`, `constrain.jl`,

@@ -14,6 +14,13 @@ so a `@free` `sigma` differentiates correctly under ForwardDiff.
 `ponytail:` direct convolution, O(N·σ) — an FFT would be faster for very wide
 kernels but breaks ForwardDiff; swap only if a profile demands it.
 
+The support is truncated at 4σ, so the sampled half-width steps by one whenever
+`4σ` crosses an integer and the output is discontinuous there. The jump is the
+weight entering at the edge — order `exp(-8)` before renormalization, measured at
+~2e-9 relative — so it is invisible to a fit, but a finite-difference check
+straddling such a σ (e.g. σ = 1.5) will disagree with the analytic derivative.
+The derivative is the correct one.
+
 # Examples
 ```julia
 cm = @model begin
