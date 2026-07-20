@@ -51,6 +51,44 @@ function _fieldexpr(Ci, name, fname, i, acc, slots)
 end
 
 """
+    _ctorexpr(M, fields) -> Expr
+
+Build the constructor call that rebuilds one leaf model of type `M` from the
+per-field expressions `fields`.
+
+Numeric fields are `promote`d together so that a dual number in one slot lifts
+the others — without it a `Gaussian1D{T<:Real}` holding one `Dual` and two
+`Float64`s could not be constructed, which is what makes ForwardDiff work.
+
+Non-numeric fields are passed through untouched. A model may legitimately hold
+something that has nothing to promote against a number — a measured
+instrumental PSF whose field is the sampled kernel array being the motivating
+case. Promoting those blindly throws
+`promotion of types Vector{Float64} and Float64 failed to change any arguments`.
+
+Which fields are numeric is read from `M` at compile time, so the all-numeric
+case (every model in the zoo) emits exactly the same `promote(...)` call as
+before and costs nothing.
+"""
+function _ctorexpr(M, fields)
+    ctor = constructorof(M)
+    num = findall(F -> F <: Number, collect(fieldtypes(M)))
+    length(num) == fieldcount(M) && return :($ctor(promote($(fields...))...))
+    length(num) <= 1 && return :($ctor($(fields...)))
+
+    # Mixed: promote the numeric fields among themselves, splice them back in place.
+    pr = gensym(:promoted)
+    args = copy(fields)
+    for (k, i) in enumerate(num)
+        args[i] = :($pr[$k])
+    end
+    return quote
+        $pr = promote($(fields[num]...))
+        $ctor($(args...))
+    end
+end
+
+"""
     _treeexpr(T, acc, slots) -> Expr
 
 Generate the expression that reconstructs one subtree from parameter values.
@@ -70,11 +108,11 @@ leaf `constraints` carried into the rebuilt tree.
 function _treeexpr(T, acc, slots)
     return if T <: Leaf
         name, M, C = T.parameters
-        fields = (
+        fields = [
             _fieldexpr(fieldtypes(C)[i], name, fieldnames(M)[i], i, acc, slots)
                 for i in 1:fieldcount(M)
-        )
-        :(Leaf{$(QuoteNode(name))}($(constructorof(M))(promote($(fields...))...), ($acc).constraints))
+        ]
+        :(Leaf{$(QuoteNode(name))}($(_ctorexpr(M, fields)), ($acc).constraints))
     else
         L, R = T.parameters
         :(
@@ -174,8 +212,11 @@ function withparams(cm::CompiledModel; kwargs...)
     names = paramnames(cm)
     for (k, v) in kwargs
         i = findfirst(==(k), names)
-        i === nothing && throw(ArgumentError(
-            "withparams: no free parameter `$k` — available: $(join(names, ", "))"))
+        i === nothing && throw(
+            ArgumentError(
+                "withparams: no free parameter `$k` — available: $(join(names, ", "))"
+            )
+        )
         p[i] = v
     end
     return withparams(cm, p)

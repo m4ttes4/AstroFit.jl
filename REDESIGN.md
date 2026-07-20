@@ -9,7 +9,7 @@ the code looked like before, what it looks like now, and what the difference
 buys. The design conversation that led here is in [KERNELS.md](KERNELS.md); the
 individual decisions are in [ADR-0001..0004](docs/adr/).
 
-**Scope of the change**: 5 files modified, 3 added, ~230 lines. 240 tests pass.
+**Scope of the change**: 6 files modified, 3 added, ~280 lines. 261 tests pass.
 The pointwise path is byte-identical in behaviour and identical in measured
 performance.
 
@@ -402,14 +402,87 @@ is what actually distinguishes correct code from broken code.
 
 ### Coverage
 
-240 tests pass, 62 of them new in
+261 tests pass, 83 of them new in
 [test/kernel_tests.jl](test/kernel_tests.jl): user-defined kernels, the full
 composition matrix, trait propagation, the allocation gate, `render!` on both
 paths, PSF normalization and flat-signal conservation, `Fixed`-by-default and
 `@free`, the size-mismatch error, AD-vs-FD, an Optimization round trip, the
 Distributions path, and display.
 
-## 9. What was planned and deliberately not built
+## 9. One thing that had to change outside the render layer
+
+`withparams` was listed above as untouched, and it nearly was. One line had to
+change, and the reason is worth recording because it is the only place where
+kernels forced a change to the machinery that predates them.
+
+The `@generated` reconstruction rebuilt every leaf as:
+
+```julia
+constructorof(M)(promote(fields...)...)     # before
+```
+
+That `promote` is load-bearing: a `Gaussian1D{T<:Real}` whose `sigma` came from
+the parameter vector as a `Dual` while its other fields are stored `Float64`
+cannot be constructed unless the fields agree on one `T`. Promoting them
+together is what makes ForwardDiff work at all.
+
+It also promoted fields that have nothing to promote. Every model in the zoo has
+all-`Real` fields, so this never showed. A **measured instrumental PSF** does
+not: its defining field is the sampled kernel array.
+
+```julia
+struct ScaledPSF{V <: AbstractVector, T <: Real} <: AbstractKernel
+    kernel::V      # the measured PSF — data, not a shape parameter
+    scale::T       # a fittable scalar next to it
+end
+```
+
+Reconstructing that leaf threw:
+
+```
+promotion of types Vector{Float64} and Float64 failed to change any arguments
+```
+
+The fix reads which fields are numeric from the model type at code-generation
+time, and promotes only those:
+
+```julia
+function _ctorexpr(M, fields)
+    num = findall(F -> F <: Number, collect(fieldtypes(M)))
+    length(num) == fieldcount(M) && return :($ctor(promote($(fields...))...))   # unchanged
+    length(num) <= 1 && return :($ctor($(fields...)))
+    # mixed: promote the numeric fields among themselves, splice back in place
+end
+```
+
+The all-numeric branch emits the *same expression as before*, so every existing
+model is unaffected and the benchmark gate still reads 0 allocations and
+3828.125 ns. The observable result on a mixed leaf is that a dual number lifts
+only what it should:
+
+```julia
+withparams(cm, ForwardDiff.Dual.(p, 1.0)).psf.model
+# ScaledPSF{Vector{Float64}, ForwardDiff.Dual{Nothing, Float64, 1}}
+#           ^ array untouched  ^ scalar lifted
+```
+
+A 2D instrumental PSF — one whose field is the intensity *matrix* — works
+through the same path, convolving the rendered image:
+
+```julia
+im = @model begin
+    src  = Gauss2D(3.0, 0.0, 0.0, 1.0)
+    ipsf = ImagePSF(psfmat)          # 3×3 measured PSF
+    src |> ipsf
+end
+render(im, X, permutedims(Y))        # 13×13 grid in, 13×13 convolved image out
+```
+
+Both are covered by tests, with gradients checked against finite differences
+away from the minimum (relative error ~1e-10) so that a zero gradient cannot
+pass for a correct one.
+
+## 10. What was planned and deliberately not built
 
 This document originally proposed a `Domain` type (`PointCloud` vs
 `GridDomain`) to make the evaluation grid explicit, motivated by a real bug: in
@@ -435,7 +508,7 @@ re-allocating the prediction array each iteration (do it when a profile says
 so), and any kernel zoo beyond `GaussianPSF` (`MoffatPSF`, instrumental LSF —
 add when a real fit needs one).
 
-## 10. File-by-file summary
+## 11. File-by-file summary
 
 | File | Change |
 |---|---|
@@ -445,12 +518,17 @@ add when a real fit needs one).
 | [src/compiled.jl](src/compiled.jl) | `Leaf` and `CompiledModel` forward the trait to what they wrap |
 | [src/macro.jl](src/macro.jl) | `_defaults(::AbstractKernel)` → all `Fixed` |
 | [src/fit/loss.jl](src/fit/loss.jl) | `chi2` dispatches on style; scalar loop renamed `_chi2p`, otherwise untouched; `_checkpred` |
+| [src/withparams.jl](src/withparams.jl) | `_ctorexpr` — promote only the numeric fields (§9); the all-numeric case emits the previous expression verbatim |
 | [src/zoo/kernels.jl](src/zoo/kernels.jl) | **new** — `GaussianPSF` |
-| [test/kernel_tests.jl](test/kernel_tests.jl) | **new** — 14 test items, 62 assertions |
+| [test/kernel_tests.jl](test/kernel_tests.jl) | **new** — 16 test items, 83 assertions |
 | [README.md](README.md) | "Kernels and PSF Convolution" section |
 
-Untouched, and that is the point: `withparams.jl`, `params.jl`, `constrain.jl`,
-`constraints.jl`, `priors.jl`, `show.jl`, the existing zoo, and every file in
-`ext/`. The `@generated` slot map reads the tree *type* and knows nothing about
-how the rebuilt model is evaluated, so the machinery that makes AstroFit fast
-was already factored along the seam this change needed.
+Untouched: `params.jl`, `constrain.jl`, `constraints.jl`, `priors.jl`,
+`show.jl`, the existing zoo, and every file in `ext/`.
+
+The one change to `withparams` is worth being precise about, because it is the
+exception that proves the rule. Its `@generated` slot map — the part that makes
+AstroFit fast — reads the tree *type* and still knows nothing about how the
+rebuilt model is evaluated; that machinery was already factored along the seam
+this change needed. What had to move was one line of field marshalling, and only
+because a kernel can hold something that is not a number.

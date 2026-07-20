@@ -383,6 +383,133 @@ end
     @test Pigeons.default_reference(f) isa Pigeons.DistributionLogPotential
 end
 
+@testitem "kernel: array-valued fields (a measured instrumental PSF)" tags = [:kernel] begin
+    using AstroFit
+    using ForwardDiff
+
+    # A measured PSF: the kernel IS data, not a parametric shape. The struct
+    # therefore holds an array, and a scalar the user may want to fit.
+    struct ScaledPSF{V <: AbstractVector, T <: Real} <: AbstractKernel
+        kernel::V
+        scale::T
+    end
+    function AstroFit.render(k::ScaledPSF, ys::AbstractVector)
+        w = k.kernel
+        h = length(w) ÷ 2
+        n = length(ys)
+        out = similar(ys, promote_type(eltype(ys), eltype(w), typeof(k.scale)))
+        for i in 1:n
+            acc = zero(eltype(out))
+            wsum = zero(eltype(w))
+            for (j, d) in enumerate((-h):h)
+                m = i + d
+                1 <= m <= n || continue
+                acc += w[j] * ys[m]
+                wsum += w[j]
+            end
+            out[i] = k.scale * acc / wsum
+        end
+        return out
+    end
+
+    kern = [0.1, 0.2, 0.4, 0.2, 0.1]
+    x = collect(-5.0:0.25:5.0)
+    cm = @model begin
+        line = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.0)
+        psf = ScaledPSF(kern, 1.0)
+        line |> psf
+    end
+    y = render(cm, x)
+
+    # both kernel fields are Fixed, so the array never reaches the parameter vector
+    @test nfree(cm) == 3
+    @test params(cm) isa Vector{Float64}
+    @test withparams(cm, [3.0, 0.5, 1.2]).psf.model.kernel === kern
+
+    # the hard case: a free scalar sitting next to the array field. withparams
+    # must promote the numeric fields among themselves and leave the array be —
+    # promoting all fields together throws on Vector-vs-Float64.
+    cm = @free cm.psf.scale
+    @test paramnames(cm) == [:line_amplitude, :line_mean, :line_sigma, :psf_scale]
+
+    dual = withparams(cm, ForwardDiff.Dual.(params(cm), 1.0))
+    @test dual.psf.model.kernel isa Vector{Float64}          # array untouched
+    @test dual.psf.model.scale isa ForwardDiff.Dual          # scalar lifted
+
+    f = ObjectiveFunction(cm, x, y)
+    p = params(cm) .+ [0.3, 0.2, -0.15, 0.1]                 # away from the minimum
+    g = ForwardDiff.gradient(f, p)
+    @test all(isfinite, g)
+    @test !all(iszero, g)
+    h = 1.0e-6
+    for i in eachindex(p)
+        step = zeros(length(p)); step[i] = h
+        @test g[i] ≈ (f(p .+ step) - f(p .- step)) / (2h) rtol = 1.0e-6
+    end
+end
+
+@testitem "kernel: 2D PSF whose field is the intensity matrix" tags = [:kernel] begin
+    using AstroFit
+    using ForwardDiff
+
+    struct ImagePSF{M <: AbstractMatrix} <: AbstractKernel
+        psf::M
+    end
+    function AstroFit.render(k::ImagePSF, img::AbstractMatrix)
+        w = k.psf
+        hy, hx = size(w) .÷ 2
+        ny, nx = size(img)
+        out = similar(img, promote_type(eltype(img), eltype(w)))
+        for j in 1:nx, i in 1:ny
+            acc = zero(eltype(out))
+            wsum = zero(eltype(w))
+            for (bj, dj) in enumerate((-hx):hx), (bi, di) in enumerate((-hy):hy)
+                ii, jj = i + di, j + dj
+                (1 <= ii <= ny && 1 <= jj <= nx) || continue
+                acc += w[bi, bj] * img[ii, jj]
+                wsum += w[bi, bj]
+            end
+            out[i, j] = acc / wsum
+        end
+        return out
+    end
+
+    struct Gauss2D{T <: Real} <: AbstractModel
+        amp::T
+        x0::T
+        y0::T
+        s::T
+    end
+    AstroFit.render(m::Gauss2D, x::Number, y::Number) =
+        m.amp * exp(-((x - m.x0)^2 + (y - m.y0)^2) / (2 * m.s^2))
+
+    psfmat = [0.05 0.1 0.05; 0.1 0.4 0.1; 0.05 0.1 0.05]
+    im = @model begin
+        src = Gauss2D(3.0, 0.0, 0.0, 1.0)
+        ipsf = ImagePSF(psfmat)
+        src |> ipsf
+    end
+
+    # column × row coordinates produce the grid the kernel convolves
+    X = collect(-3.0:0.5:3.0)
+    Y = permutedims(collect(-3.0:0.5:3.0))
+    out = render(im, X, Y)
+    @test size(out) == (length(X), length(Y))
+    @test nfree(im) == 4                       # the PSF matrix is not a parameter
+    @test maximum(out) < maximum(render(im.src, X, Y))   # convolution smooths the peak
+
+    obj(q) = sum(abs2, render(withparams(im, q), X, Y) .- out)
+    q = params(im) .+ [0.4, 0.2, -0.3, 0.15]
+    g = ForwardDiff.gradient(obj, q)
+    @test all(isfinite, g)
+    @test !all(iszero, g)
+    h = 1.0e-6
+    for i in eachindex(q)
+        step = zeros(length(q)); step[i] = h
+        @test g[i] ≈ (obj(q .+ step) - obj(q .- step)) / (2h) rtol = 1.0e-6
+    end
+end
+
 @testitem "kernel: errors and display" tags = [:kernel] begin
     using AstroFit
 
