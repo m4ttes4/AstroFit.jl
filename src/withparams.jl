@@ -51,36 +51,6 @@ function _fieldexpr(Ci, name, fname, i, acc, slots)
 end
 
 """
-    _ctorexpr(M, fields) -> Expr
-
-Build the constructor call that rebuilds one leaf model of type `M` from the
-per-field expressions `fields`.
-
-[`Parameter fields`](@ref parameter-fields) are `promote`d together, so a dual
-number in one slot lifts the others — without it a `Gaussian1D{T<:Real}` holding
-one `Dual` and two `Float64`s could not be constructed, which is what makes
-ForwardDiff work. Internal-value fields are passed through untouched.
-
-When every field is a parameter field — the whole model zoo — the emitted
-expression is exactly the `promote(...)` call this replaced, so the common path
-costs nothing.
-"""
-function _ctorexpr(M, fields)
-    ctor = constructorof(M)
-    pf = findall(_isparamfield, collect(fieldtypes(M)))
-
-    length(pf) == fieldcount(M) && return :($ctor(promote($(fields...))...))
-    length(pf) <= 1 && return :($ctor($(fields...)))
-
-    pr = gensym(:promoted)
-    args = copy(fields)
-    for (k, i) in enumerate(pf)
-        args[i] = :($pr[$k])
-    end
-    return Expr(:block, :($pr = promote($(fields[pf]...))), :($ctor($(args...))))
-end
-
-"""
     _treeexpr(T, acc, slots) -> Expr
 
 Generate the expression that reconstructs one subtree from parameter values.
@@ -100,11 +70,11 @@ leaf `constraints` carried into the rebuilt tree.
 function _treeexpr(T, acc, slots)
     return if T <: Leaf
         name, M, C = T.parameters
-        fields = [
+        fields = (
             _fieldexpr(fieldtypes(C)[i], name, fieldnames(M)[i], i, acc, slots)
                 for i in 1:fieldcount(M)
-        ]
-        :(Leaf{$(QuoteNode(name))}($(_ctorexpr(M, fields)), ($acc).constraints))
+        )
+        :(Leaf{$(QuoteNode(name))}($(constructorof(M))($(fields...)), ($acc).constraints))
     else
         L, R = T.parameters
         :(

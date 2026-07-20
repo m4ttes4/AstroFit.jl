@@ -556,22 +556,15 @@ end
     @test duali.sigma isa ForwardDiff.Dual
 end
 
-@testitem "the field contract: floats are parameters, everything else internal" tags = [:kernel] begin
+@testitem "nested duals: re-parameterizing a model that already carries duals" tags = [:kernel] begin
     using AstroFit
     using ForwardDiff
 
-    isp = AstroFit._isparamfield
-    @test isp(Float64) && isp(Float32) && isp(BigFloat)
-    @test isp(ForwardDiff.Dual{Nothing, Float64, 1})     # Real but not AbstractFloat
-    @test !isp(Int) && !isp(Bool) && !isp(UInt8)         # Numbers, but not parameters
-    @test !isp(Symbol) && !isp(String) && !isp(Vector{Float64})
-    @test !isp(Matrix{Float64}) && !isp(typeof(abs)) && !isp(Tuple{Int, Int})
-
-    # re-parameterizing a model that already carries duals must keep working,
-    # which is why the predicate admits Dual rather than testing AbstractFloat
-    struct MixPSF{T <: Real} <: AbstractKernel
-        sigma::T
-        scale::T
+    # Each field keeps its own type parameter, so `<: Real` (not `<: AbstractFloat`) is
+    # the bound that admits a Dual — and a Dual of a Dual, which second-order AD produces.
+    struct MixPSF{S <: Real, C <: Real} <: AbstractKernel
+        sigma::S
+        scale::C
         halfwidth::Int
         edge::Symbol
     end
@@ -587,7 +580,7 @@ end
     d1 = withparams(cm, ForwardDiff.Dual.(params(cm), 1.0))
     d2 = withparams(d1, ForwardDiff.Dual.(params(d1), 1.0))
     @test d2.psf.model.sigma isa ForwardDiff.Dual
-    @test d2.psf.model.scale isa ForwardDiff.Dual        # lifted with its sibling
+    @test d2.psf.model.scale === 2.0                     # Fixed: stays a Float64
     @test d2.psf.model.halfwidth === 3                   # internal, untouched
     @test d2.psf.model.edge === :clamp
 end
@@ -596,11 +589,11 @@ end
     using AstroFit
     using ForwardDiff
 
-    # Two fields share T; every other field is its own thing. Promoting all of
-    # them together, or every `<:Number` among them, breaks reconstruction.
-    struct BigPSF{T <: Real, V <: AbstractVector, M <: AbstractMatrix, F} <: AbstractKernel
-        sigma::T
-        scale::T
+    # Every field is its own type parameter or its own concrete type; reconstruction
+    # passes each one through untouched, whatever it is.
+    struct BigPSF{S <: Real, C <: Real, V <: AbstractVector, M <: AbstractMatrix, F} <: AbstractKernel
+        sigma::S
+        scale::C
         taps::V
         weights::M
         apodize::F
@@ -635,11 +628,11 @@ end
     @test m.label == "measured-2024"
     @test m.span === (1, 5)
 
-    # free one of the two linked fields: both lift, nothing else does
+    # free one field: only that one becomes a Dual, every other field is untouched
     free = @free cm.psf.sigma
     d = withparams(free, ForwardDiff.Dual.(params(free), 1.0)).psf.model
     @test d.sigma isa ForwardDiff.Dual
-    @test d.scale isa ForwardDiff.Dual         # shares T with sigma
+    @test d.scale === 2.0                      # Fixed, stays a Float64
     @test d.taps isa Vector{Float64}           # its own parameter
     @test d.order === 2
     @test d.normalize === true

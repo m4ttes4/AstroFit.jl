@@ -1,16 +1,15 @@
 # --- 2D model library ---
 
-Base.@kwdef struct Gaussian2D{T <: Real} <: AbstractModel
-    amplitude::T = 1.0
-    x0::T = 0.0
-    y0::T = 0.0
-    sigma::T = 1.0
-    q::T = 1.0
-    theta::T = 0.0
+Base.@kwdef struct Gaussian2D{
+        T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real,
+    } <: AbstractModel
+    amplitude::T1 = 1.0
+    x0::T2 = 0.0
+    y0::T3 = 0.0
+    sigma::T4 = 1.0
+    q::T5 = 1.0
+    theta::T6 = 0.0
 end
-
-Gaussian2D(amplitude::Real, x0::Real, y0::Real, sigma::Real, q::Real, theta::Real) =
-    Gaussian2D(promote(amplitude, x0, y0, sigma, q, theta)...)
 
 function render(m::Gaussian2D, x::Number, y::Number)
     dx, dy = x - m.x0, y - m.y0
@@ -35,18 +34,17 @@ end
 
 
 # ponytail: b_n via Ciotti & Bertin 1999 approximation, SpecialFunctions.jl if sub-percent needed
-Base.@kwdef struct Sersic2D{T <: Real} <: AbstractModel
-    amplitude::T = 1.0
-    x0::T = 0.0
-    y0::T = 0.0
-    r_eff::T = 1.0
-    n::T = 1.0
-    q::T = 1.0
-    theta::T = 0.0
+Base.@kwdef struct Sersic2D{
+        T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, T7 <: Real,
+    } <: AbstractModel
+    amplitude::T1 = 1.0
+    x0::T2 = 0.0
+    y0::T3 = 0.0
+    r_eff::T4 = 1.0
+    n::T5 = 1.0
+    q::T6 = 1.0
+    theta::T7 = 0.0
 end
-
-Sersic2D(amplitude::Real, x0::Real, y0::Real, r_eff::Real, n::Real, q::Real, theta::Real) =
-    Sersic2D(promote(amplitude, x0, y0, r_eff, n, q, theta)...)
 
 function render(m::Sersic2D, x::Number, y::Number)
     bn = 2 * m.n - 1 / 3 + 4 / (405 * m.n)
@@ -74,18 +72,17 @@ function render!(out::AbstractArray, m::Sersic2D, xs::AbstractArray, ys::Abstrac
 end
 
 
-Base.@kwdef struct Moffat2D{T <: Real} <: AbstractModel
-    amplitude::T = 1.0
-    x0::T = 0.0
-    y0::T = 0.0
-    alpha::T = 1.0
-    beta::T = 1.0
-    q::T = 1.0
-    theta::T = 0.0
+Base.@kwdef struct Moffat2D{
+        T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, T7 <: Real,
+    } <: AbstractModel
+    amplitude::T1 = 1.0
+    x0::T2 = 0.0
+    y0::T3 = 0.0
+    alpha::T4 = 1.0
+    beta::T5 = 1.0
+    q::T6 = 1.0
+    theta::T7 = 0.0
 end
-
-Moffat2D(amplitude::Real, x0::Real, y0::Real, alpha::Real, beta::Real, q::Real, theta::Real) =
-    Moffat2D(promote(amplitude, x0, y0, alpha, beta, q, theta)...)
 
 function render(m::Moffat2D, x::Number, y::Number)
     dx, dy = x - m.x0, y - m.y0
@@ -109,18 +106,17 @@ function render!(out::AbstractArray, m::Moffat2D, xs::AbstractArray, ys::Abstrac
 end
 
 
-Base.@kwdef struct Beta2D{T <: Real} <: AbstractModel
-    amplitude::T = 1.0
-    x0::T = 0.0
-    y0::T = 0.0
-    r_core::T = 1.0
-    beta::T = 0.67
-    q::T = 1.0
-    theta::T = 0.0
+Base.@kwdef struct Beta2D{
+        T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, T7 <: Real,
+    } <: AbstractModel
+    amplitude::T1 = 1.0
+    x0::T2 = 0.0
+    y0::T3 = 0.0
+    r_core::T4 = 1.0
+    beta::T5 = 0.67
+    q::T6 = 1.0
+    theta::T7 = 0.0
 end
-
-Beta2D(amplitude::Real, x0::Real, y0::Real, r_core::Real, beta::Real, q::Real, theta::Real) =
-    Beta2D(promote(amplitude, x0, y0, r_core, beta, q, theta)...)
 
 function render(m::Beta2D, x::Number, y::Number)
     dx, dy = x - m.x0, y - m.y0

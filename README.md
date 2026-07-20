@@ -666,9 +666,9 @@ get a `Chains` object directly), PairPlots.jl for corner plots, and so on.
 
 The main thing I want to add is a macro for defining new model components. Right
 now, bringing your own model means writing the full boilerplate by hand: the
-`@kwdef struct`, a `promote` constructor, and a `render` method (see
+`@kwdef struct` with one type parameter per field, and a `render` method (see
 [Extending AstroFit](#extending-astrofit)). It is not hard, but it is the same
-four blocks every time, and it is the steepest part of the learning curve. I want
+blocks every time, and it is the steepest part of the learning curve. I want
 that barrier gone.
 
 The idea is to let you declare a component from a single formula:
@@ -683,8 +683,8 @@ The idea is to let you declare a component from a single formula:
 
 The coordinates come before the semicolon, the parameters (with their defaults)
 after it. From that one line the macro would generate everything the model
-protocol needs: the parametric `@kwdef struct <: AbstractModel`, the `promote`
-constructor that keeps the field types uniform, and the scalar `render` method
+protocol needs: the `@kwdef struct <: AbstractModel` with one `<:Real` type
+parameter per field, and the scalar `render` method
 (rewriting each bare parameter name into a field access on the model). I would
 not generate a hand-tuned `render!`. The generic broadcasting fallback already
 covers it, and the per-model loops in the zoo stay as opt-in micro-optimisations.
@@ -694,13 +694,11 @@ already are, so it drops straight into `@model`, `@constrain`, and the fitting
 path:
 
 ```julia
-Base.@kwdef struct Gaussian1D{T<:Real} <: AbstractModel
-    amplitude::T = 1.0
-    mean::T = 0.0
-    sigma::T = 1.0
+Base.@kwdef struct Gaussian1D{A<:Real, M<:Real, S<:Real} <: AbstractModel
+    amplitude::A = 1.0
+    mean::M = 0.0
+    sigma::S = 1.0
 end
-Gaussian1D(amplitude::Real, mean::Real, sigma::Real) =
-    Gaussian1D(promote(amplitude, mean, sigma)...)
 render(m::Gaussian1D, x::Number) =
     m.amplitude * exp(-((x - m.mean) / m.sigma)^2 / 2)
 ```
@@ -950,37 +948,36 @@ Your struct needs to subtype `AbstractModel` and hold its parameters as fields.
 Use `@kwdef` so you get keyword constructors for free:
 
 ```julia
-Base.@kwdef struct Blackbody1D{T<:Real} <: AbstractModel
-    temperature::T = 5000.0
-    norm::T        = 1.0
+Base.@kwdef struct Blackbody1D{T1<:Real, T2<:Real} <: AbstractModel
+    temperature::T1 = 5000.0
+    norm::T2        = 1.0
 end
 ```
 
-One thing to watch: the type parameter `T` should be `<:Real`, not `Float64`.
-ForwardDiff works by passing dual numbers through your model. If you hardcode
-`Float64`, gradient-based fitting will break.
+Two things to watch. Each fittable field gets **its own** type parameter, and
+each of those parameters should be `<:Real`, not `Float64`. ForwardDiff works by
+passing dual numbers through your model, so a hardcoded `Float64` breaks
+gradient-based fitting.
 
-#### The field contract
+The per-field parameter matters just as much. AstroFit rebuilds a model field by
+field, and during differentiation a free field arrives as a dual number while a
+fixed one keeps its `Float64` value — so the fields will not always agree on a
+type. Share one parameter across two fields and the model works until the user
+fixes one of them, then fails with a `MethodError` from inside a gradient.
 
-AstroFit decides what a field *is* from its type, and this is a pact worth
-knowing before you design a struct:
+#### What a field is
 
-> **Floating-point fields are parameters. Everything else is an internal value.**
+Nothing is coerced: **each field keeps whatever type it is given**, and is
+carried through reconstruction untouched.
 
-A parameter field can be fitted, gets a slot in the flat parameter vector when
-it is `Free`, and must be able to hold a dual number — which is why it is
-declared `::T`, not `::Float64`. On reconstruction, the parameter fields of a
-model are promoted to a common type, so a dual arriving in one slot lifts the
-others.
-
-An internal value is carried through untouched and never fitted. Integers,
-`Bool`s, `Symbol`s, arrays, matrices, strings, functions and tuples are all
-internal:
+> Declare a field with its own `<:Real` parameter if you might ever want to fit
+> it. Give it a concrete type (`Int`, `Bool`, `Symbol`, an array) if it is an
+> internal value.
 
 ```julia
-struct InstrumentalPSF{T<:Real, V<:AbstractVector} <: AbstractKernel
-    sigma::T          # parameter — fittable, holds duals
-    scale::T          # parameter — promoted together with sigma
+struct InstrumentalPSF{S<:Real, C<:Real, V<:AbstractVector} <: AbstractKernel
+    sigma::S          # fittable — its own parameter, holds duals
+    scale::C          # fittable — its own parameter, independent of sigma
     taps::V           # internal — a measured kernel is data, not a parameter
     halfwidth::Int    # internal — a count in samples
     normalize::Bool   # internal — a flag
@@ -988,14 +985,9 @@ struct InstrumentalPSF{T<:Real, V<:AbstractVector} <: AbstractKernel
 end
 ```
 
-`Int` and `Bool` are `Number`s in Julia, but they are *not* parameters here.
-That is deliberate rather than an oversight: a gradient-based optimizer cannot
-perturb a discrete value, and an `Int` field cannot hold a dual number, so
-treating them as parameters could only fail later and more confusingly. It also
-means the obvious way to write a structural field is the correct one.
-
-The practical rule when designing a model: **if you might ever want to fit it,
-declare it `::T`; otherwise give it its natural concrete type.**
+An internal field of any type needs no special handling — a gradient-based
+optimizer was never going to perturb a `Symbol` or an `Int`, and since nothing
+is promoted, nothing tries to turn one into a dual number.
 
 ### Step 2: define `render`
 

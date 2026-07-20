@@ -1,13 +1,10 @@
 # --- 1D model library ---
 
-Base.@kwdef struct Gaussian1D{T <: Real} <: AbstractModel
-    amplitude::T = 1.0
-    mean::T = 0.0
-    sigma::T = 1.0
+Base.@kwdef struct Gaussian1D{A <: Real, M <: Real, S <: Real} <: AbstractModel
+    amplitude::A = 1.0
+    mean::M = 0.0
+    sigma::S = 1.0
 end
-
-Gaussian1D(amplitude::Real, mean::Real, sigma::Real) =
-    Gaussian1D(promote(amplitude, mean, sigma)...)
 
 render(m::Gaussian1D, x::Number) = m.amplitude * exp(-((x - m.mean) / m.sigma)^2 / 2)
 
@@ -34,12 +31,10 @@ function render!(out::AbstractArray, m::Const1D, xs::AbstractArray)
 end
 
 
-Base.@kwdef struct Linear1D{T <: Real} <: AbstractModel
-    slope::T = 1.0
-    intercept::T = 0.0
+Base.@kwdef struct Linear1D{S <: Real, I <: Real} <: AbstractModel
+    slope::S = 1.0
+    intercept::I = 0.0
 end
-
-Linear1D(slope::Real, intercept::Real) = Linear1D(promote(slope, intercept)...)
 
 render(m::Linear1D, x::Number) = m.slope * x + m.intercept
 
@@ -51,14 +46,11 @@ function render!(out::AbstractArray, m::Linear1D, xs::AbstractArray)
 end
 
 
-Base.@kwdef struct Lorentzian1D{T <: Real} <: AbstractModel
-    amplitude::T = 1.0
-    mean::T = 0.0
-    gamma::T = 1.0
+Base.@kwdef struct Lorentzian1D{A <: Real, M <: Real, G <: Real} <: AbstractModel
+    amplitude::A = 1.0
+    mean::M = 0.0
+    gamma::G = 1.0
 end
-
-Lorentzian1D(amplitude::Real, mean::Real, gamma::Real) =
-    Lorentzian1D(promote(amplitude, mean, gamma)...)
 
 render(m::Lorentzian1D, x::Number) = m.amplitude / (1 + ((x - m.mean) / m.gamma)^2)
 
@@ -71,15 +63,12 @@ end
 
 
 # ponytail: Thompson et al. 1987 pseudo-Voigt, no SpecialFunctions dep
-Base.@kwdef struct Voigt1D{T <: Real} <: AbstractModel
-    amplitude::T = 1.0
-    mean::T = 0.0
-    sigma::T = 1.0
-    gamma::T = 1.0
+Base.@kwdef struct Voigt1D{A <: Real, M <: Real, S <: Real, G <: Real} <: AbstractModel
+    amplitude::A = 1.0
+    mean::M = 0.0
+    sigma::S = 1.0
+    gamma::G = 1.0
 end
-
-Voigt1D(amplitude::Real, mean::Real, sigma::Real, gamma::Real) =
-    Voigt1D(promote(amplitude, mean, sigma, gamma)...)
 
 function render(m::Voigt1D, x::Number)
     fg = 2 * m.sigma * sqrt(2 * log(2))
@@ -112,14 +101,11 @@ function render!(out::AbstractArray, m::Voigt1D, xs::AbstractArray)
 end
 
 
-Base.@kwdef struct PowerLaw1D{T <: Real} <: AbstractModel
-    norm::T = 1.0
-    x_ref::T = 1.0
-    index::T = 1.0
+Base.@kwdef struct PowerLaw1D{N <: Real, X <: Real, I <: Real} <: AbstractModel
+    norm::N = 1.0
+    x_ref::X = 1.0
+    index::I = 1.0
 end
-
-PowerLaw1D(norm::Real, x_ref::Real, index::Real) =
-    PowerLaw1D(promote(norm, x_ref, index)...)
 
 render(m::PowerLaw1D, x::Number) = m.norm * (x / m.x_ref)^(-m.index)
 
@@ -131,13 +117,10 @@ function render!(out::AbstractArray, m::PowerLaw1D, xs::AbstractArray)
 end
 
 
-Base.@kwdef struct BlackBody1D{T <: Real} <: AbstractModel
-    amplitude::T = 1.0
+Base.@kwdef struct BlackBody1D{A <: Real, T <: Real} <: AbstractModel
+    amplitude::A = 1.0
     temperature::T = 1.0
 end
-
-BlackBody1D(amplitude::Real, temperature::Real) =
-    BlackBody1D(promote(amplitude, temperature)...)
 
 render(m::BlackBody1D, x::Number) = m.amplitude * x^3 / (exp(x / m.temperature) - 1)
 
@@ -150,15 +133,12 @@ function render!(out::AbstractArray, m::BlackBody1D, xs::AbstractArray)
 end
 
 
-Base.@kwdef struct BrokenPowerLaw1D{T <: Real} <: AbstractModel
-    norm::T = 1.0
-    x_break::T = 1.0
-    index1::T = 1.0
-    index2::T = 2.0
+Base.@kwdef struct BrokenPowerLaw1D{N <: Real, X <: Real, I1 <: Real, I2 <: Real} <: AbstractModel
+    norm::N = 1.0
+    x_break::X = 1.0
+    index1::I1 = 1.0
+    index2::I2 = 2.0
 end
-
-BrokenPowerLaw1D(norm::Real, x_break::Real, index1::Real, index2::Real) =
-    BrokenPowerLaw1D(promote(norm, x_break, index1, index2)...)
 
 render(m::BrokenPowerLaw1D, x::Number) =
     m.norm * (x / m.x_break)^(x <= m.x_break ? -m.index1 : -m.index2)
@@ -172,13 +152,10 @@ function render!(out::AbstractArray, m::BrokenPowerLaw1D, xs::AbstractArray)
 end
 
 
-Base.@kwdef struct Exponential1D{T <: Real} <: AbstractModel
-    amplitude::T = 1.0
+Base.@kwdef struct Exponential1D{A <: Real, T <: Real} <: AbstractModel
+    amplitude::A = 1.0
     tau::T = 1.0
 end
-
-Exponential1D(amplitude::Real, tau::Real) =
-    Exponential1D(promote(amplitude, tau)...)
 
 render(m::Exponential1D, x::Number) = m.amplitude * exp(-x / m.tau)
 

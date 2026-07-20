@@ -443,66 +443,84 @@ Reconstructing that leaf threw:
 promotion of types Vector{Float64} and Float64 failed to change any arguments
 ```
 
-Two fixes were needed, and the first one was wrong in an instructive way.
+Two attempts at *selective* promotion were made, and both were wrong in an
+instructive way.
 
 Promoting only the `<:Number` fields looks right and isn't: `Int` and `Bool` are
 `Number`s in Julia, so a concretely-typed `halfwidth::Int` got promoted to
 `Float64`, the constructor stopped matching, and under AD it became a `Dual` —
-reintroducing `InexactError` one layer down. A second attempt grouped fields by
-which *type parameter* they were declared with, which was correct but produced a
-function nobody would want to maintain, and encoded the contract implicitly in
-the promotion logic rather than stating it.
+reintroducing `InexactError` one layer down. A second attempt promoted only the
+fields whose declared type is `Real`-but-not-`Integer`, stated as a **field
+contract** (*"floating-point fields are parameters, everything else is an
+internal value"*) and implemented as an `_isparamfield` predicate. That worked,
+but it left the package having to explain why a `Float64` field is fittable
+while an `Int` field is not, and why `Bool` — a `Number` — is internal.
 
-What landed instead is a **stated pact**, with the implementation following from
-it rather than the other way round:
-
-> Floating-point fields are parameters. Everything else is an internal value.
+The eventual fix went the other way: instead of deciding *which* fields to
+promote, **stop promoting at all**, and change the structs so nothing needs
+promoting.
 
 ```julia
-_isparamfield(::Type{F}) where {F} = F <: Real && !(F <: Integer)
+constructorof(M)(fields...)                 # after — one token shorter than before
 ```
 
-A parameter field is fittable, gets a slot when `Free`, and must be able to hold
-a dual number — so it is declared `::T`, and the parameter fields of a model are
-promoted together so one dual lifts the rest. An internal value — an `Int` count,
-a `Bool` flag, a `Symbol` edge policy, a measured kernel array, a function — is
-carried through untouched.
-
-Excluding `Int` and `Bool` despite their being `Number`s is the substance of the
-pact, not a detail: a gradient-based optimizer cannot perturb a discrete value
-and an `Int` cannot hold a dual, so admitting them as parameters could only fail
-later and more confusingly. The payoff is that the obvious way to write a
-structural field is the correct one.
-
-The predicate tests `Real && !Integer` rather than `AbstractFloat` for one
-concrete reason: `ForwardDiff.Dual <: Real` but **not** `<: AbstractFloat`, so
-the literal reading would break re-parameterizing a model that already carries
-duals. There is a test for exactly that.
+That works because every model struct now declares **one type parameter per
+field**:
 
 ```julia
-function _ctorexpr(M, fields)
-    pf = findall(_isparamfield, collect(fieldtypes(M)))
-    length(pf) == fieldcount(M) && return :($ctor(promote($(fields...))...))   # unchanged
-    length(pf) <= 1 && return :($ctor($(fields...)))
-    # otherwise: promote the parameter fields, splice them back in place
+Base.@kwdef struct Gaussian1D{A <: Real, M <: Real, S <: Real} <: AbstractModel
+    amplitude::A = 1.0
+    mean::M      = 0.0
+    sigma::S     = 1.0
 end
 ```
 
-The first branch is the whole existing zoo — every field a parameter field —
-and it emits the *same expression as before*, so every existing model is
-unaffected and the benchmark gate still reads 0 allocations and
-3828.125 ns. The observable result on a mixed leaf is that a dual number lifts
-only what it should:
+`Gaussian1D{Dual, Float64, Float64}` is a perfectly good type, so a free
+amplitude arriving as a dual next to two fixed `Float64`s constructs with no
+help. The `promote` call, and with it `_ctorexpr`, `_isparamfield` and the
+twelve hand-written promoting constructors in the zoo, all became dead weight.
+
+It is worth being precise about the direction of the argument, because it is
+easy to get backwards: per-field type parameters do **not** make `promote` safe
+on a heterogeneous field set. `promote` acts on runtime values, not on declared
+types, so `promote([0.1, 0.2], 1.5, 3)` fails whatever the struct's parameters
+are. Per-field parameters are what make the `promote` call *unnecessary*.
+
+The bound stays `<: Real` on every fittable field, and for the same reason the
+old predicate was written as `Real && !Integer`: `ForwardDiff.Dual <: Real` but
+**not** `<: AbstractFloat`, so `<: AbstractFloat` would reject duals outright and
+break re-parameterizing a model that already carries them. There is a test for
+exactly that.
+
+Two consequences beyond the deleted code.
+
+First, the whole question the field contract had to answer *disappears*. Nothing
+is coerced, so a field of any type is carried through untouched and needs no
+special handling — a `Symbol` edge policy, a `Matrix`, an `Int` order. The rule
+shrinks to: give a field its own `<:Real` parameter if you might fit it, a
+concrete type if you won't.
+
+Second, fixed fields no longer become duals during differentiation, so their
+arithmetic stays in `Float64`:
 
 ```julia
-withparams(cm, ForwardDiff.Dual.(p, 1.0)).psf.model
-# ScaledPSF{Vector{Float64}, ForwardDiff.Dual{Nothing, Float64, 1}}
-#           ^ array untouched  ^ scalar lifted
+withparams(cf, ForwardDiff.Dual.(p, 1.0)).g.model
+# Gaussian1D{ForwardDiff.Dual{Nothing, Float64, 1}, Float64, Float64}
+#            ^ the free field                       ^ fixed, still Float64
 ```
 
-and on a ten-field kernel carrying a `Symbol` edge policy, a `Bool`, an `Int`
-order, a `String` label, a function and a `Tuple`, only the two fields sharing
-`T` lift; the `Int` stays an `Int` and the `Bool` stays a `Bool`.
+On a gradient through an `ObjectiveFunction` over a 1001-point grid, a gaussian
+with one of three fields free measures 5.8 μs where the promoting version
+measured 8.0 μs. A model with *every* field free gains nothing — every field is a
+dual either way — and neither does a leaf with every field fixed, where no dual
+enters at all. The mixed case is the only one that gains, and the gain scales
+with the model's total `nfree`, since that is the dual width the fixed fields no
+longer carry. The benchmark gate is unmoved: 0 allocations, 3833 ns.
+
+The cost is a breaking change for user models. A struct that shares one type
+parameter across several fields and has no promoting constructor of its own now
+fails as soon as one of those fields is fixed and the model is differentiated —
+and *only* then, which makes the break intermittent. See ADR 0005.
 
 A 2D instrumental PSF — one whose field is the intensity *matrix* — works
 through the same path, convolving the rendered image:
@@ -550,19 +568,22 @@ add when a real fit needs one).
 
 | File | Change |
 |---|---|
-| [src/model.jl](src/model.jl) | `Pointwise`/`Domainwise` traits, `_combine`, style-dispatched `render`/`render!` entry points, the `_isparamfield` field contract |
+| [src/model.jl](src/model.jl) | `Pointwise`/`Domainwise` traits, `_combine`, style-dispatched `render`/`render!` entry points |
 | [src/kernel.jl](src/kernel.jl) | **new** — `AbstractKernel`, its trait, the documented contract, a clear error for unsupported array types |
 | [src/compound.jl](src/compound.jl) | trait combination for the five nodes, `_arender` structural recursion |
 | [src/compiled.jl](src/compiled.jl) | `Leaf` and `CompiledModel` forward the trait to what they wrap |
 | [src/macro.jl](src/macro.jl) | `_defaults(::AbstractKernel)` → all `Fixed` |
 | [src/fit/loss.jl](src/fit/loss.jl) | `chi2` dispatches on style; scalar loop renamed `_chi2p`, otherwise untouched; `_checkpred` |
-| [src/withparams.jl](src/withparams.jl) | `_ctorexpr` — promote only the numeric fields (§9); the all-numeric case emits the previous expression verbatim |
+| [src/withparams.jl](src/withparams.jl) | the leaf `promote` call dropped — each field is passed to the constructor as it is (§9) |
 | [src/zoo/kernels.jl](src/zoo/kernels.jl) | **new** — `GaussianPSF` |
 | [test/kernel_tests.jl](test/kernel_tests.jl) | **new** — 19 test items, 115 assertions |
 | [README.md](README.md) | "Kernels and PSF Convolution" section |
 
-Untouched: `params.jl`, `constrain.jl`, `constraints.jl`, `priors.jl`,
-`show.jl`, the existing zoo, and every file in `ext/`.
+| [src/params.jl](src/params.jl) | `params` promotes the collected values, so a mixed-type field set still yields a concrete vector |
+| [src/zoo/models1d.jl](src/zoo/models1d.jl), [models2d.jl](src/zoo/models2d.jl) | one type parameter per field; the twelve promoting constructors deleted |
+
+Untouched: `constrain.jl`, `constraints.jl`, `priors.jl`, `show.jl`, and every
+file in `ext/`.
 
 The one change to `withparams` is worth being precise about, because it is the
 exception that proves the rule. Its `@generated` slot map — the part that makes

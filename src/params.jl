@@ -12,8 +12,13 @@ nfree(cm::CompiledModel) = _nfree(getfield(cm, :tree))
 _nfree(l::Leaf) = count(_isfree, l.constraints)
 _nfree(n) = _nfree(n.left) + _nfree(n.right)
 
-# Current free-parameter values — the p₀ the optimizer starts from.
-params(cm::CompiledModel) = collect(_params(getfield(cm, :tree)))
+# Current free-parameter values — the p₀ the optimizer starts from. Fields no longer share
+# a type, so an Int field beside Float64 ones would give a Vector{Real}: promote here to keep
+# the optimizer's vector concrete. `promote()` on nothing yields Vector{Union{}}, hence the guard.
+function params(cm::CompiledModel)
+    vals = _params(getfield(cm, :tree))
+    return isempty(vals) ? Float64[] : collect(promote(vals...))
+end
 _params(l::Leaf) = Tuple(getfield(l.model, i) for (i, c) in enumerate(l.constraints) if _isfree(c))
 _params(n) = (_params(n.left)..., _params(n.right)...)
 

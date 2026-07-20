@@ -3,43 +3,6 @@ abstract type AbstractModel end
 Base.broadcastable(m::AbstractModel) = (m,)
 
 # ---------------------------------------------------------------------------
-# The field contract
-# ---------------------------------------------------------------------------
-
-"""
-    AstroFit._isparamfield(F) -> Bool
-
-Whether a field of declared type `F` is a **parameter field**.
-
-This is the contract AstroFit makes with a model author, and it is decided by
-the field's type alone:
-
-- **Floating-point fields are parameter fields.** They may be fitted, they get a
-  slot in the flat parameter vector when `Free`, and — the part that constrains
-  the implementation — they must be able to hold a dual number, because that is
-  how ForwardDiff propagates derivatives through `withparams`. Fields of a model
-  are promoted to a common type on reconstruction so that a dual in one slot
-  lifts the others; declare them with the model's type parameter (`::T` where
-  `T <: Real`), never as a concrete `Float64`.
-- **Everything else is an internal value.** Integers, `Bool`s, `Symbol`s,
-  arrays, strings, functions, tuples: carried through reconstruction untouched
-  and never fitted. A measured PSF's sampled kernel, a half-width in samples, an
-  edge policy, a normalization flag — all internal.
-
-`Bool` and `Int` are `Number`s in Julia but are *not* parameter fields here.
-That is deliberate: a gradient-based optimizer cannot perturb a discrete value,
-and an `Int` field cannot hold a dual number, so treating them as parameters
-could only fail. It also means the natural way to write a structural field —
-`halfwidth::Int`, `normalize::Bool` — is the correct one.
-
-Dual numbers are `Real` but not `AbstractFloat`, so the predicate is written to
-include them: re-parameterizing a model that already carries duals still works.
-
-See also: [`withparams`](@ref), [`AbstractKernel`](@ref)
-"""
-@inline _isparamfield(::Type{F}) where {F} = F <: Real && !(F <: Integer)
-
-# ---------------------------------------------------------------------------
 # Evaluation style — how a model turns coordinates into values.
 #
 # Pointwise:  defines render(m, x::Number...); arrays come from broadcasting it,
