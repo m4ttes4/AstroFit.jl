@@ -556,6 +556,42 @@ end
     @test duali.sigma isa ForwardDiff.Dual
 end
 
+@testitem "the field contract: floats are parameters, everything else internal" tags = [:kernel] begin
+    using AstroFit
+    using ForwardDiff
+
+    isp = AstroFit._isparamfield
+    @test isp(Float64) && isp(Float32) && isp(BigFloat)
+    @test isp(ForwardDiff.Dual{Nothing, Float64, 1})     # Real but not AbstractFloat
+    @test !isp(Int) && !isp(Bool) && !isp(UInt8)         # Numbers, but not parameters
+    @test !isp(Symbol) && !isp(String) && !isp(Vector{Float64})
+    @test !isp(Matrix{Float64}) && !isp(typeof(abs)) && !isp(Tuple{Int, Int})
+
+    # re-parameterizing a model that already carries duals must keep working,
+    # which is why the predicate admits Dual rather than testing AbstractFloat
+    struct MixPSF{T <: Real} <: AbstractKernel
+        sigma::T
+        scale::T
+        halfwidth::Int
+        edge::Symbol
+    end
+    AstroFit.render(k::MixPSF, ys::AbstractVector) = k.scale .* ys
+
+    cm = @model begin
+        l = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.0)
+        psf = MixPSF(1.5, 2.0, 3, :clamp)
+        l |> psf
+    end
+    cm = @free cm.psf.sigma
+
+    d1 = withparams(cm, ForwardDiff.Dual.(params(cm), 1.0))
+    d2 = withparams(d1, ForwardDiff.Dual.(params(d1), 1.0))
+    @test d2.psf.model.sigma isa ForwardDiff.Dual
+    @test d2.psf.model.scale isa ForwardDiff.Dual        # lifted with its sibling
+    @test d2.psf.model.halfwidth === 3                   # internal, untouched
+    @test d2.psf.model.edge === :clamp
+end
+
 @testitem "kernel: many fields of many types" tags = [:kernel] begin
     using AstroFit
     using ForwardDiff

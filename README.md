@@ -960,6 +960,43 @@ One thing to watch: the type parameter `T` should be `<:Real`, not `Float64`.
 ForwardDiff works by passing dual numbers through your model. If you hardcode
 `Float64`, gradient-based fitting will break.
 
+#### The field contract
+
+AstroFit decides what a field *is* from its type, and this is a pact worth
+knowing before you design a struct:
+
+> **Floating-point fields are parameters. Everything else is an internal value.**
+
+A parameter field can be fitted, gets a slot in the flat parameter vector when
+it is `Free`, and must be able to hold a dual number — which is why it is
+declared `::T`, not `::Float64`. On reconstruction, the parameter fields of a
+model are promoted to a common type, so a dual arriving in one slot lifts the
+others.
+
+An internal value is carried through untouched and never fitted. Integers,
+`Bool`s, `Symbol`s, arrays, matrices, strings, functions and tuples are all
+internal:
+
+```julia
+struct InstrumentalPSF{T<:Real, V<:AbstractVector} <: AbstractKernel
+    sigma::T          # parameter — fittable, holds duals
+    scale::T          # parameter — promoted together with sigma
+    taps::V           # internal — a measured kernel is data, not a parameter
+    halfwidth::Int    # internal — a count in samples
+    normalize::Bool   # internal — a flag
+    edge::Symbol      # internal — an edge policy
+end
+```
+
+`Int` and `Bool` are `Number`s in Julia, but they are *not* parameters here.
+That is deliberate rather than an oversight: a gradient-based optimizer cannot
+perturb a discrete value, and an `Int` field cannot hold a dual number, so
+treating them as parameters could only fail later and more confusingly. It also
+means the obvious way to write a structural field is the correct one.
+
+The practical rule when designing a model: **if you might ever want to fit it,
+declare it `::T`; otherwise give it its natural concrete type.**
+
 ### Step 2: define `render`
 
 `render` takes your model and a single scalar coordinate, and returns the model

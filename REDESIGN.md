@@ -9,7 +9,7 @@ the code looked like before, what it looks like now, and what the difference
 buys. The design conversation that led here is in [KERNELS.md](KERNELS.md); the
 individual decisions are in [ADR-0001..0004](docs/adr/).
 
-**Scope of the change**: 6 files modified, 3 added, ~300 lines. 284 tests pass.
+**Scope of the change**: 6 files modified, 3 added, ~300 lines. 293 tests pass.
 The pointwise path is byte-identical in behaviour and identical in measured
 performance.
 
@@ -402,7 +402,7 @@ is what actually distinguishes correct code from broken code.
 
 ### Coverage
 
-284 tests pass, 106 of them new in
+293 tests pass, 115 of them new in
 [test/kernel_tests.jl](test/kernel_tests.jl): user-defined kernels, the full
 composition matrix, trait propagation, the allocation gate, `render!` on both
 paths, PSF normalization and flat-signal conservation, `Fixed`-by-default and
@@ -443,44 +443,52 @@ Reconstructing that leaf threw:
 promotion of types Vector{Float64} and Float64 failed to change any arguments
 ```
 
-The first fix — promote only the `<:Number` fields — was wrong, and a second
-round of probing caught it. `Int <: Number`, so a concretely-typed
-`halfwidth::Int` got promoted to `Float64` and the constructor stopped matching;
-under AD it became a `Dual` and `Bool` fields degraded the same way.
+Two fixes were needed, and the first one was wrong in an instructive way.
 
-The right question is not "is this field a number?" but **"is this field
-required to agree with another one?"** — and that is answered by the struct
-declaration: fields typed with the same type parameter must agree, everything
-else must not be touched. Grouping by *which* parameter is essential rather than
-pedantic, because a parametric array field is a type variable too:
+Promoting only the `<:Number` fields looks right and isn't: `Int` and `Bool` are
+`Number`s in Julia, so a concretely-typed `halfwidth::Int` got promoted to
+`Float64`, the constructor stopped matching, and under AD it became a `Dual` —
+reintroducing `InexactError` one layer down. A second attempt grouped fields by
+which *type parameter* they were declared with, which was correct but produced a
+function nobody would want to maintain, and encoded the contract implicitly in
+the promotion logic rather than stating it.
+
+What landed instead is a **stated pact**, with the implementation following from
+it rather than the other way round:
+
+> Floating-point fields are parameters. Everything else is an internal value.
 
 ```julia
-struct BigPSF{T <: Real, V <: AbstractVector} <: AbstractKernel
-    sigma::T          # ─┐ same parameter: promoted together
-    scale::T          # ─┘
-    taps::V           # also a type variable — but its own; promoting it
-                      #   against sigma throws
-    halfwidth::Int    # concrete — promoting it breaks the constructor
-    edge::Symbol      # nothing to promote at all
+_isparamfield(::Type{F}) where {F} = F <: Real && !(F <: Integer)
+```
+
+A parameter field is fittable, gets a slot when `Free`, and must be able to hold
+a dual number — so it is declared `::T`, and the parameter fields of a model are
+promoted together so one dual lifts the rest. An internal value — an `Int` count,
+a `Bool` flag, a `Symbol` edge policy, a measured kernel array, a function — is
+carried through untouched.
+
+Excluding `Int` and `Bool` despite their being `Number`s is the substance of the
+pact, not a detail: a gradient-based optimizer cannot perturb a discrete value
+and an `Int` cannot hold a dual, so admitting them as parameters could only fail
+later and more confusingly. The payoff is that the obvious way to write a
+structural field is the correct one.
+
+The predicate tests `Real && !Integer` rather than `AbstractFloat` for one
+concrete reason: `ForwardDiff.Dual <: Real` but **not** `<: AbstractFloat`, so
+the literal reading would break re-parameterizing a model that already carries
+duals. There is a test for exactly that.
+
+```julia
+function _ctorexpr(M, fields)
+    pf = findall(_isparamfield, collect(fieldtypes(M)))
+    length(pf) == fieldcount(M) && return :($ctor(promote($(fields...))...))   # unchanged
+    length(pf) <= 1 && return :($ctor($(fields...)))
+    # otherwise: promote the parameter fields, splice them back in place
 end
 ```
 
-So `_ctorexpr` reads the declared field types from the *generic* struct
-(`Gaussian1D` says `T`; the instance `Gaussian1D{Float64}` says `Float64`, which
-is exactly the information that gets lost), groups the type-variable fields by
-identity, and promotes within each group:
-
-```julia
-decl = Base.unwrap_unionall(M.name.wrapper).types
-groups = ...                                    # field indices, keyed by TypeVar
-linked = [g for g in values(groups) if length(g) > 1]
-
-isempty(linked) && return :($ctor($(fields...)))
-length(linked) == 1 && length(linked[1]) == fieldcount(M) &&
-    return :($ctor(promote($(fields...))...))   # unchanged: the whole zoo
-```
-
-The last branch is the whole existing zoo — one group covering every field —
+The first branch is the whole existing zoo — every field a parameter field —
 and it emits the *same expression as before*, so every existing model is
 unaffected and the benchmark gate still reads 0 allocations and
 3828.125 ns. The observable result on a mixed leaf is that a dual number lifts
@@ -542,7 +550,7 @@ add when a real fit needs one).
 
 | File | Change |
 |---|---|
-| [src/model.jl](src/model.jl) | `Pointwise`/`Domainwise` traits, `_combine`, style-dispatched `render`/`render!` entry points |
+| [src/model.jl](src/model.jl) | `Pointwise`/`Domainwise` traits, `_combine`, style-dispatched `render`/`render!` entry points, the `_isparamfield` field contract |
 | [src/kernel.jl](src/kernel.jl) | **new** — `AbstractKernel`, its trait, the documented contract, a clear error for unsupported array types |
 | [src/compound.jl](src/compound.jl) | trait combination for the five nodes, `_arender` structural recursion |
 | [src/compiled.jl](src/compiled.jl) | `Leaf` and `CompiledModel` forward the trait to what they wrap |
@@ -550,7 +558,7 @@ add when a real fit needs one).
 | [src/fit/loss.jl](src/fit/loss.jl) | `chi2` dispatches on style; scalar loop renamed `_chi2p`, otherwise untouched; `_checkpred` |
 | [src/withparams.jl](src/withparams.jl) | `_ctorexpr` — promote only the numeric fields (§9); the all-numeric case emits the previous expression verbatim |
 | [src/zoo/kernels.jl](src/zoo/kernels.jl) | **new** — `GaussianPSF` |
-| [test/kernel_tests.jl](test/kernel_tests.jl) | **new** — 18 test items, 106 assertions |
+| [test/kernel_tests.jl](test/kernel_tests.jl) | **new** — 19 test items, 115 assertions |
 | [README.md](README.md) | "Kernels and PSF Convolution" section |
 
 Untouched: `params.jl`, `constrain.jl`, `constraints.jl`, `priors.jl`,

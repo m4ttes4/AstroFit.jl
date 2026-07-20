@@ -56,62 +56,28 @@ end
 Build the constructor call that rebuilds one leaf model of type `M` from the
 per-field expressions `fields`.
 
-Fields sharing a type parameter are `promote`d together, so a dual number in one
-slot lifts its siblings — without it a `Gaussian1D{T<:Real}` holding one `Dual`
-and two `Float64`s could not be constructed, which is what makes ForwardDiff
-work.
+[`Parameter fields`](@ref parameter-fields) are `promote`d together, so a dual
+number in one slot lifts the others — without it a `Gaussian1D{T<:Real}` holding
+one `Dual` and two `Float64`s could not be constructed, which is what makes
+ForwardDiff work. Internal-value fields are passed through untouched.
 
-The grouping is by *which* type parameter, read from the struct declaration at
-compile time, and every other field is passed through untouched. Both halves
-matter once a model holds something other than plain numbers — a measured
-instrumental PSF is the motivating case:
-
-```julia
-struct BigPSF{T <: Real, V <: AbstractVector} <: AbstractKernel
-    sigma::T          # ─┐ promoted together: they must agree
-    scale::T          # ─┘
-    taps::V           # its own parameter — promoting it against sigma would throw
-    halfwidth::Int    # concrete — promoting it to Float64 breaks the constructor
-    edge::Symbol      # nothing to promote at all
-end
-```
-
-Promoting everything together throws
-`promotion of types Vector{Float64} and Float64 failed to change any arguments`;
-promoting every `<:Number` field turns `halfwidth` into a `Float64` (and, under
-AD, into a `Dual`) and the constructor no longer matches.
-
-When one group covers every field — every model in the zoo — the emitted
-expression is exactly the `promote(...)` call this function replaced, so the
-common path costs nothing.
+When every field is a parameter field — the whole model zoo — the emitted
+expression is exactly the `promote(...)` call this replaced, so the common path
+costs nothing.
 """
 function _ctorexpr(M, fields)
     ctor = constructorof(M)
+    pf = findall(_isparamfield, collect(fieldtypes(M)))
 
-    # Declared field types, from the generic struct rather than this instance:
-    # `Gaussian1D{Float64}` says `Float64`, `Gaussian1D` says `T`, and only the
-    # latter tells us which fields are required to agree.
-    decl = Base.unwrap_unionall(M.name.wrapper).types
-    groups = Dict{Any, Vector{Int}}()
-    for (i, F) in enumerate(decl)
-        F isa TypeVar && push!(get!(groups, F, Int[]), i)
-    end
-    linked = [g for g in values(groups) if length(g) > 1]
+    length(pf) == fieldcount(M) && return :($ctor(promote($(fields...))...))
+    length(pf) <= 1 && return :($ctor($(fields...)))
 
-    isempty(linked) && return :($ctor($(fields...)))
-    length(linked) == 1 && length(linked[1]) == fieldcount(M) &&
-        return :($ctor(promote($(fields...))...))
-
+    pr = gensym(:promoted)
     args = copy(fields)
-    pre = Expr[]
-    for g in linked
-        pr = gensym(:promoted)
-        push!(pre, :($pr = promote($(fields[g]...))))
-        for (k, i) in enumerate(g)
-            args[i] = :($pr[$k])
-        end
+    for (k, i) in enumerate(pf)
+        args[i] = :($pr[$k])
     end
-    return Expr(:block, pre..., :($ctor($(args...))))
+    return Expr(:block, :($pr = promote($(fields[pf]...))), :($ctor($(args...))))
 end
 
 """
