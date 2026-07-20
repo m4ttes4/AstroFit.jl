@@ -34,7 +34,10 @@ end
 function render(k::GaussianPSF, ys::AbstractVector)
     σ = k.sigma
     σ > 0 || throw(ArgumentError("GaussianPSF: sigma must be positive, got $σ"))
-    h = max(1, ceil(Int, 4 * _val(σ)))          # truncate at 4σ, at least one neighbour
+    # Truncate at 4σ, at least one neighbour. The half-width is structural, so it
+    # must not carry a derivative — ForwardDiff's own `ceil(::Type, ::Dual)`
+    # drops it, which is what keeps a free `sigma` differentiable here.
+    h = max(1, ceil(Int, 4σ))
     w = [exp(-abs2(d / σ) / 2) for d in (-h):h]
 
     out = similar(ys, promote_type(eltype(ys), eltype(w)))
@@ -53,7 +56,3 @@ function render(k::GaussianPSF, ys::AbstractVector)
     end
     return out
 end
-
-# Kernel half-width is structural — it must not carry a derivative, or ceil would
-# try to make an Int out of a Dual. ForwardDiff overloads this for its own types.
-_val(x) = x

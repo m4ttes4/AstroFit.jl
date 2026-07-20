@@ -275,6 +275,37 @@ end
     @test sol.u ≈ [2.0, 1.0, 1.0, 0.5] rtol = 1.0e-4
 end
 
+@testitem "kernel: the Distributions path routes through the kernel chi2" tags = [:kernel] begin
+    using AstroFit
+    using Distributions
+
+    x = collect(-5.0:0.2:5.0)
+    cm = @model begin
+        line = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.0)
+        cont = Const1D(value = 0.5)
+        psf = GaussianPSF(sigma = 1.5)
+        (line |> psf) + cont
+    end
+    y = render(cm, x)
+    err = fill(0.1, length(y))
+    p = AstroFit.params(cm)
+
+    # loglikelihood/logposterior are chi2-derived, so they inherit the split
+    ll = ObjectiveFunction(cm, x, y, err; statistic = AstroFit.loglikelihood)
+    @test isfinite(ll(p))
+    @test ll(p) ≈ -0.5 * AstroFit.chi2(ObjectiveFunction(cm, x, y, err), p) + ll._loglike_const
+
+    # the posterior path needs a prior on every free slot
+    prior = @constrain cm begin
+        line.amplitude ~ LogNormal(0.0, 1.0)
+        line.mean ~ Normal(0.0, 1.0)
+        line.sigma ~ truncated(Normal(1.0, 0.5); lower = 0.0)
+        cont.value ~ Normal(0.5, 1.0)
+    end
+    lp = ObjectiveFunction(prior, x, y, err; statistic = AstroFit.neglogposterior)
+    @test isfinite(lp(AstroFit.params(prior)))
+end
+
 @testitem "kernel: errors and display" tags = [:kernel] begin
     using AstroFit
 
