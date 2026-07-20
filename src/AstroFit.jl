@@ -2,8 +2,10 @@ module AstroFit
 
 include("constraints.jl")
 include("model.jl")
+include("kernel.jl")
 include("zoo/models1d.jl")
 include("zoo/models2d.jl")
+include("zoo/kernels.jl")
 include("compound.jl")
 include("compiled.jl")
 include("priors.jl")
@@ -15,10 +17,11 @@ include("zoo/recipes1d.jl")
 include("fit/loss.jl")
 include("show.jl")
 
-export AbstractModel
+export AbstractModel, AbstractKernel, evalstyle
 export Gaussian1D, Const1D, Linear1D, Lorentzian1D, Voigt1D
 export PowerLaw1D, BlackBody1D, BrokenPowerLaw1D, Exponential1D, Redshift1D
 export Gaussian2D, Sersic2D, Moffat2D, Beta2D
+export GaussianPSF
 export AbstractConstraint, Free, Fixed, Bounded, Tied
 export CompiledModel, withparams, params, nfree, bounds, paramnames
 export setconstraint, validate

@@ -1,9 +1,8 @@
-
 _coords(x::Tuple) = x
 _coords(x) = (x,)
 
 
-
+# NOTE rewrite chi2 in a more idiomatic way
 """
     chi2(model, coords, y, err)
     chi2(f::ObjectiveFunction, p)
@@ -13,22 +12,58 @@ Compute the χ² statistic (sum of squared residuals, optionally weighted by `1/
 The two-argument form substitutes parameters `p` into the objective's compiled model
 before evaluating.
 
+Pointwise models take a scalar loop that never materializes the prediction;
+models containing a kernel ([`AbstractKernel`](@ref)) cannot be evaluated one
+point at a time, so they render once over the whole coordinate array. The split
+is by [`evalstyle`](@ref) and folds at compile time.
+
 See also: [`loglikelihood`](@ref), [`ObjectiveFunction`](@ref)
 """
-function chi2(model, coords, y, ::Nothing)
+chi2(model, coords, y, err) = _chi2(evalstyle(model), model, coords, y, err)
+
+@inline _chi2(::Pointwise, model, coords, y, err) = _chi2p(model, coords, y, err)
+
+# Domainwise: one render for the whole array, then a vectorized residual. The
+# sum runs over a generator, so the residuals are never materialized either —
+# the prediction array is the only extra allocation, once per objective call.
+function _chi2(::Domainwise, model, coords, y, ::Nothing)
+    μ = render(model, coords...)
+    _checkpred(μ, y)
+    return sum(i -> abs2(μ[i] - y[i]), eachindex(y))
+end
+
+function _chi2(::Domainwise, model, coords, y, err)
+    μ = render(model, coords...)
+    _checkpred(μ, y)
+    return sum(i -> abs2((μ[i] - y[i]) / err[i]), eachindex(y))
+end
+
+# A kernel that is not size-preserving would otherwise silently mis-align the
+# residual (or throw far from the cause).
+function _checkpred(μ, y)
+    size(μ) == size(y) || throw(
+        DimensionMismatch(
+            "model prediction has size $(size(μ)) but data has size $(size(y)) — " *
+                "a kernel must return an array the same size as its input"
+        )
+    )
+    return nothing
+end
+
+function _chi2p(model, coords, y, ::Nothing)
     fi = firstindex(y)
     acc = @inbounds abs2(render(model, map(c -> c[fi], coords)...) - y[fi])
-    @inbounds for i in (fi+1):lastindex(y)
+    @inbounds for i in (fi + 1):lastindex(y)
         acc += abs2(render(model, map(c -> c[i], coords)...) - y[i])
     end
     return acc
 end
 
-function chi2(model, coords, y, err)
+function _chi2p(model, coords, y, err)
     fi = firstindex(y)
     r = @inbounds render(model, map(c -> c[fi], coords)...) - y[fi]
     acc = abs2(r / @inbounds err[fi])
-    @inbounds for i in (fi+1):lastindex(y)
+    @inbounds for i in (fi + 1):lastindex(y)
         r = render(model, map(c -> c[i], coords)...) - y[i]
         acc += abs2(r / err[i])
     end
@@ -36,22 +71,22 @@ function chi2(model, coords, y, err)
 end
 
 # 1D fast path — direct indexing, no map/splat
-function chi2(model, coords::Tuple{AbstractVector}, y, ::Nothing)
+function _chi2p(model, coords::Tuple{AbstractVector}, y, ::Nothing)
     x = coords[1]
     fi = firstindex(y)
     acc = @inbounds abs2(render(model, x[fi]) - y[fi])
-    @inbounds for i in (fi+1):lastindex(y)
+    @inbounds for i in (fi + 1):lastindex(y)
         acc += abs2(render(model, x[i]) - y[i])
     end
     return acc
 end
 
-function chi2(model, coords::Tuple{AbstractVector}, y, err)
+function _chi2p(model, coords::Tuple{AbstractVector}, y, err)
     x = coords[1]
     fi = firstindex(y)
     r = @inbounds render(model, x[fi]) - y[fi]
     acc = abs2(r / @inbounds err[fi])
-    @inbounds for i in (fi+1):lastindex(y)
+    @inbounds for i in (fi + 1):lastindex(y)
         r = render(model, x[i]) - y[i]
         acc += abs2(r / err[i])
     end

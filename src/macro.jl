@@ -61,6 +61,12 @@ Return a tuple of [`Free`](@ref) constraints, one per field of `m`.
 """
 _defaults(m) = ntuple(_ -> Free(), fieldcount(typeof(m)))
 
+# Kernels are the exception: their fields default Fixed, because a kernel is
+# normally a known calibration input, and a free integer field (a width in
+# samples) breaks ForwardDiff outright. Fit one with an explicit `@free`.
+# See docs/adr/0004-kernel-fields-fixed-by-default.md.
+_defaults(m::AbstractKernel) = ntuple(i -> Fixed(getfield(m, i)), fieldcount(typeof(m)))
+
 """
     _compiled(tree) -> CompiledModel
 

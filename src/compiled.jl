@@ -13,6 +13,11 @@ Leaf{name}(model::M, constraints::C) where {name, M, C} = Leaf{name, M, C}(model
 @inline render(l::Leaf, x::Number...) = render(l.model, x...)
 render!(out::AbstractArray, l::Leaf, x...) = render!(out, l.model, x...)
 
+# A leaf is evaluated exactly like the model it wraps; the wrapper is transparent
+# to the array path too.
+evalstyle(::Type{Leaf{name, M, C}}) where {name, M, C} = evalstyle(M)
+@inline _arender(l::Leaf, xs::AbstractArray...) = render(l.model, xs...)
+
 # A single annotated model tree (compound nodes + Leaf leaves) plus priors.
 struct CompiledModel{T, P}
     tree::T
@@ -21,6 +26,8 @@ end
 
 CompiledModel(tree) = CompiledModel(tree, nothing)
 
+
+evalstyle(::Type{CompiledModel{T, P}}) where {T, P} = evalstyle(T)
 
 render(cm::CompiledModel, x...) = render(getfield(cm, :tree), x...)
 render!(out::AbstractArray, cm::CompiledModel, x...) = render!(out, getfield(cm, :tree), x...)

@@ -43,6 +43,7 @@ Pkg.add(url="https://github.com/m4ttes4/AstroFit.jl")
 - [Motivation](#motivation)
 - [Quick Start](#quick-start)
 - [Building Models](#building-models)
+- [Kernels and PSF Convolution](#kernels-and-psf-convolution)
 - [Adding Constraints](#adding-constraints)
 - [Working With Parameters](#working-with-parameters)
 - [Fitting](#fitting)
@@ -210,6 +211,85 @@ spec.line_a.constraints  # constraint on each field: (Free(), Free(), Free())
 
 This is how you check values and constraint state at any point: before
 fitting, after fitting, or while debugging.
+
+
+## Kernels and PSF Convolution
+
+Most models answer "what is the value at this coordinate?" — one point at a
+time. A PSF convolution can't: the value at one point depends on its
+neighbours. Those are **kernels**, and they are ordinary models in every way
+that matters — they live in the tree, they compose with the usual operators,
+they carry constraints, and they fit.
+
+```julia
+cm = @model begin
+    line = Gaussian1D(amplitude = 2.0, mean = 6563.0, sigma = 1.0)
+    cont = Const1D(value = 0.5)
+    psf  = GaussianPSF(sigma = 2.0)      # width in SAMPLES, not Å
+    (line |> psf) + cont                 # convolve the line, leave the continuum alone
+end
+
+render(cm, x)                            # whole array in, whole array out
+```
+
+`|>` means what it always meant — feed the left output into the right — and the
+result composes further, so the convolved component is just another term:
+
+```julia
+(line |> psf) + cont        # convolved line on an unconvolved continuum
+(line |> psf) * transmission
+line |> psf1 |> psf2        # chained
+((line + wing) |> psf) + cont
+```
+
+### Writing your own
+
+A kernel subtypes `AbstractKernel` and defines the **array** render instead of
+the scalar one:
+
+```julia
+struct BoxKernel <: AbstractKernel
+    width::Int
+end
+
+function AstroFit.render(k::BoxKernel, ys::AbstractVector)
+    # ... return an array the same size as ys
+end
+```
+
+Two rules:
+
+- **Intensities in, intensities out.** The array a kernel receives is the values
+  produced upstream, not coordinates. Array index *is* the grid, so widths are
+  in samples and the grid is assumed uniform — convert physical widths yourself
+  when you build the kernel.
+- **Same size out as in.** How you treat the edges (clamp, zero-pad,
+  renormalize) is your kernel's choice; `GaussianPSF` renormalizes so a flat
+  signal stays flat all the way to the borders.
+
+### Fitting a kernel
+
+Kernel fields default to `Fixed`, because a PSF is usually a known calibration
+input — and a free integer field (a width in samples) would break ForwardDiff
+outright. Opt in explicitly when you do want to fit one:
+
+```julia
+cm = @free cm.psf.sigma
+```
+
+Gradients flow through the convolution, so kernel models work with
+`OptimizationProblem` and ForwardDiff exactly like pointwise ones. Note that a
+free PSF width is often degenerate with the intrinsic line width — only their
+combination is identifiable from the data.
+
+### Cost
+
+A kernel-free model is untouched by any of this. Whether a subtree is pointwise
+is answered from its *type*, so it folds away at compile time: a model with no
+kernel takes the same fused single-pass broadcast it always did, and its χ² loop
+still allocates nothing. Inside a kernel model, fusion breaks only where the
+kernel actually sits — `(a + b) |> psf` renders `a + b` in one fused pass before
+convolving.
 
 
 ## Adding Constraints
