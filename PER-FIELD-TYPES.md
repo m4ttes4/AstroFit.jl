@@ -157,15 +157,42 @@ allow nonsense like a `String` amplitude. Kernel fields that are *not* numeric
 ### 4.1 src/withparams.jl — the core change
 
 Delete `_ctorexpr` and its docstring entirely (currently around lines 53–75),
-and change the single call site in `_treeexpr`:
+and change the single call site in `_treeexpr` so that the constructor is called
+with the fields **as they are**:
 
 ```julia
-# before
+# on main — promotes every field, throws on any non-numeric one
+:(Leaf{$(QuoteNode(name))}($(constructorof(M))(promote($(fields...))...), ($acc).constraints))
+
+# on this branch — _ctorexpr decides which fields to promote
 :(Leaf{$(QuoteNode(name))}($(_ctorexpr(M, fields)), ($acc).constraints))
 
-# after
+# after this change — no promotion at all
 :(Leaf{$(QuoteNode(name))}($(constructorof(M))($(fields...)), ($acc).constraints))
 ```
+
+**The `promote` call is the thing being removed, and `_ctorexpr` only goes away
+as a consequence.** This is worth stating precisely because it is easy to get
+backwards: per-field type parameters do *not* make `promote` safe on a
+heterogeneous field set. `promote` acts on runtime values, not on declared
+types, so it fails identically whatever the struct's parameters are:
+
+```julia
+struct K{V <: AbstractVector, S <: Real, N <: Integer}
+    taps::V; scale::S; halfwidth::N
+end
+
+K(promote([0.1, 0.2, 0.1], 1.5, 3)...)
+# ERROR: promotion of types Vector{Float64}, Float64 and Int64
+#        failed to change any arguments
+
+K([0.1, 0.2, 0.1], 1.5, 3)
+# K{Vector{Float64}, Float64, Int64}([0.1, 0.2, 0.1], 1.5, 3)
+```
+
+Per-field parameters are what make the `promote` call *unnecessary* — they are
+not what makes it harmless. The end state is one token shorter than `main`, not
+longer.
 
 `fields` may go back to being a generator rather than a `Vector` if you prefer;
 it was made a `Vector` only because `_ctorexpr` indexed into it.
