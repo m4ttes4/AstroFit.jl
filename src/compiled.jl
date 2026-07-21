@@ -1,5 +1,6 @@
 # Leaf + CompiledModel structure, plus getproperty navigation. withparams lives in
-# withparams.jl; the setconstraint/validate edit engine in constrain.jl.
+# withparams.jl; the setconstraint/validate edit engine in constrain.jl; everything
+# that evaluates the tree in render.jl.
 
 # A named leaf in the annotated tree. `name` (the user symbol) lives in the type so
 # navigation resolves from the type; `constraints` is a Tuple positional to `model`'s
@@ -10,14 +11,6 @@ struct Leaf{name, M, C} <: AbstractModel
 end
 Leaf{name}(model::M, constraints::C) where {name, M, C} = Leaf{name, M, C}(model, constraints)
 
-@inline render(l::Leaf, x::Number...) = render(l.model, x...)
-render!(out::AbstractArray, l::Leaf, x...) = render!(out, l.model, x...)
-
-# A leaf is evaluated exactly like the model it wraps; the wrapper is transparent
-# to the array path too.
-evalstyle(::Type{Leaf{name, M, C}}) where {name, M, C} = evalstyle(M)
-@inline _arender(l::Leaf, xs::AbstractArray...) = render(l.model, xs...)
-
 # A single annotated model tree (compound nodes + Leaf leaves) plus priors.
 struct CompiledModel{T, P}
     tree::T
@@ -25,12 +18,6 @@ struct CompiledModel{T, P}
 end
 
 CompiledModel(tree) = CompiledModel(tree, nothing)
-
-
-evalstyle(::Type{CompiledModel{T, P}}) where {T, P} = evalstyle(T)
-
-render(cm::CompiledModel, x...) = render(getfield(cm, :tree), x...)
-render!(out::AbstractArray, cm::CompiledModel, x...) = render!(out, getfield(cm, :tree), x...)
 
 # Navigation: cm.g1 returns the Leaf tagged :g1. Plain dispatch recursion — `name` is in
 # the type (Val{name}/Leaf{name}), so each leaf resolves statically to the leaf or

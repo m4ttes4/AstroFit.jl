@@ -1071,6 +1071,43 @@ end
 
 This is purely optional. Define it when profiling shows it matters.
 
+One rule if your model takes more than one coordinate: **broadcast, do not write a
+linear `eachindex(out, xs, ys)` loop.** A linear loop demands identical axes, and
+that rejects two of the three coordinate forms below — including the one a PSF
+needs. The built-in 2D models broadcast a shared helper with their constants
+hoisted out of it; see [`src/zoo/models2d.jl`](src/zoo/models2d.jl).
+
+### Rendering a 2D model
+
+Three ways to say where the model is evaluated, in order of how much you have to
+type:
+
+```julia
+# 1. an image — no coordinates at all. The grid is the array's own index space,
+#    so the model's parameters are in pixels.
+img = render(scene, image)          # same size as `image`; its values are ignored
+render!(out, scene)                 # `out` is the image: grid and destination
+
+# 2. grid form — one axis per dimension, shaped to broadcast. Physical units,
+#    and the coordinates do not scale with the picture.
+x = collect(range(-8, 8; length = 100))
+y = reshape(x, 1, :)                # a column against a row — zero-copy
+img = render(scene, x, y)           # 100×100
+
+# 3. flat point list — every coordinate array co-shaped with the output, for
+#    scattered points or a meshgrid you already have.
+img = render(scene, X, Y)
+```
+
+Form 1 is form 2 with the axes filled in for you, so they cost the same. Both hand
+a 2D kernel a real image rather than the diagonal two plain vectors would produce,
+and both allocate only the output — `render!` allocates nothing.
+
+The one place the two differ is what a matrix means to a kernel. A model that
+contains one reads a lone matrix as *intensities*, not as a grid template — that
+is the kernel contract, and it is why `render(psf, image)` convolves instead of
+re-gridding. See [ADR-0006](docs/adr/0006-grid-form-coordinates.md).
+
 ---
 
 ## Internal Design

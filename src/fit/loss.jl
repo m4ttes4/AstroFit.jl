@@ -23,17 +23,19 @@ chi2(model, coords, y, err) = _chi2(evalstyle(model), model, coords, y, err)
 
 @inline _chi2(::Pointwise, model, coords, y, err) = _chi2p(model, coords, y, err)
 
-# Domainwise: one render for the whole array, then a vectorized residual. The
-# sum runs over a generator, so the residuals are never materialized either —
-# the prediction array is the only extra allocation, once per objective call.
+# Domainwise: `_eval`, not `render` — the tree materializes an array only where a
+# kernel forces one, and the compound nodes above it stay a lazy `Broadcasted`.
+# Indexing that in the residual sum means the prediction is never assembled into
+# an array of its own, so an objective call allocates the kernel's working arrays
+# and nothing else.
 function _chi2(::Domainwise, model, coords, y, ::Nothing)
-    μ = render(model, coords...)
+    μ = _eval(model, coords...)
     _checkpred(μ, y)
     return sum(i -> abs2(μ[i] - y[i]), eachindex(y))
 end
 
 function _chi2(::Domainwise, model, coords, y, err)
-    μ = render(model, coords...)
+    μ = _eval(model, coords...)
     _checkpred(μ, y)
     return sum(i -> abs2((μ[i] - y[i]) / err[i]), eachindex(y))
 end
@@ -50,24 +52,19 @@ function _checkpred(μ, y)
     return nothing
 end
 
+# `_eval` (render.jl) is the same lazy `Broadcasted` that `render`/`render!` build,
+# reused here instead of indexing one coordinate array at a time: a single loop
+# then serves both coordinate forms — a flat list of co-shaped points, and the
+# grid form (a column `x` against a row `y`) that a kernel needs. Nothing is
+# materialized: `μ[i]` evaluates `render` at that point.
 function _chi2p(model, coords, y, ::Nothing)
-    fi = firstindex(y)
-    acc = @inbounds abs2(render(model, map(c -> c[fi], coords)...) - y[fi])
-    @inbounds for i in (fi + 1):lastindex(y)
-        acc += abs2(render(model, map(c -> c[i], coords)...) - y[i])
-    end
-    return acc
+    μ = _eval(model, coords...)
+    return sum(i -> abs2(μ[i] - y[i]), eachindex(y))
 end
 
 function _chi2p(model, coords, y, err)
-    fi = firstindex(y)
-    r = @inbounds render(model, map(c -> c[fi], coords)...) - y[fi]
-    acc = abs2(r / @inbounds err[fi])
-    @inbounds for i in (fi + 1):lastindex(y)
-        r = render(model, map(c -> c[i], coords)...) - y[i]
-        acc += abs2(r / err[i])
-    end
-    return acc
+    μ = _eval(model, coords...)
+    return sum(i -> abs2((μ[i] - y[i]) / err[i]), eachindex(y))
 end
 
 # 1D fast path — direct indexing, no map/splat
@@ -93,18 +90,40 @@ function _chi2p(model, coords::Tuple{AbstractVector}, y, err)
     return acc
 end
 
+# One rule covers both coordinate forms: the coordinates must broadcast to
+# exactly the shape of `y`. That admits the flat point list (co-shaped arrays)
+# and the grid form (one axis per dimension — a column `x` against a row `y`),
+# and it rejects two plain vectors against an image, which would otherwise render
+# the diagonal instead of the image.
+function _checkcoords(coords, y)
+    shape = try
+        Base.Broadcast.broadcast_shape(map(axes, coords)...)
+    catch
+        nothing                       # incompatible axes: report it as our own error
+    end
+    shape == axes(y) || throw(
+        ArgumentError(
+            "coordinates must broadcast to the shape of `y`: got sizes $(map(size, coords)) against $(size(y))"
+        )
+    )
+    return nothing
+end
+
 """
     check_data(x, y, err)
 
-Validate that coordinate, data, and error arrays have consistent lengths and that
-all `err` values (if provided) are positive. Throws `ArgumentError` on failure.
+Validate that the coordinates broadcast to the shape of `y`, that `err` (if
+provided) matches `y` in length, and that all `err` values are positive. Throws
+`ArgumentError` on failure.
+
+Coordinates may be given either as a flat point list (every coordinate array
+co-shaped with `y`) or in grid form (one axis per dimension, shaped so they
+broadcast — a column `x` against a row `y`). The grid form is what a model
+containing an [`AbstractKernel`](@ref) needs, since a kernel is handed the whole
+image.
 """
 function check_data(x, y, err)
-    all(c -> length(c) == length(y), _coords(x)) || throw(
-        ArgumentError(
-            "each coordinate array must have the same length as `y`"
-        )
-    )
+    _checkcoords(_coords(x), y)
     err === nothing && return nothing
     length(y) == length(err) || throw(
         ArgumentError(
@@ -204,7 +223,7 @@ Compute the Gaussian log-likelihood at parameter vector `p`: `-0.5 * χ² + cons
 See also: [`chi2`](@ref), [`logposterior`](@ref)
 """
 @inline loglikelihood(f::ObjectiveFunction, p) = -0.5 * chi2(f, p) + f._loglike_const
-
+# is it necessary to save the logconstant?
 """
     negloglikelihood(f::ObjectiveFunction, p) -> Float64
 

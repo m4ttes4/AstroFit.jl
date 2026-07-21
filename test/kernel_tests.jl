@@ -672,3 +672,95 @@ end
     @test occursin("4×4 Matrix{Float64}", out)
     @test !occursin("0.25", out)   # no element dump
 end
+
+@testitem "kernel: a 2D PSF fits from grid-form coordinates" tags = [:kernel] begin
+    using AstroFit
+
+    # 3×3 box blur, renormalized at the edges: matrix in, same-size matrix out.
+    struct BoxPSF2D{T <: Real} <: AbstractKernel
+        weight::T
+    end
+    function AstroFit.render(k::BoxPSF2D, img::AbstractMatrix)
+        ny, nx = size(img)
+        out = similar(img, promote_type(eltype(img), typeof(k.weight)))
+        for j in 1:nx, i in 1:ny
+            acc = zero(eltype(out))
+            n = 0
+            for dj in (-1):1, di in (-1):1
+                ii, jj = i + di, j + dj
+                (1 <= ii <= ny && 1 <= jj <= nx) || continue
+                acc += img[ii, jj]
+                n += 1
+            end
+            out[i, j] = k.weight * acc / n
+        end
+        return out
+    end
+
+    cm = @model begin
+        src = Gaussian2D(amplitude = 3.0, x0 = 0.2, y0 = -0.1, sigma = 1.0, q = 1.0, theta = 0.0)
+        psf = BoxPSF2D(1.0)
+        src |> psf
+    end
+
+    # Grid form — a column against a row — is what hands the kernel an image.
+    col = collect(-3.0:0.5:3.0)
+    row = reshape(collect(-3.0:0.5:3.0), 1, :)
+    img = render(cm, col, row)
+    @test size(img) == (length(col), length(col))
+    @test maximum(img) < maximum(render(cm.src, col, row))   # the blur happened
+
+    f = ObjectiveFunction(cm, (col, row), img)
+    @test f(params(cm)) ≈ 0.0 atol = 1.0e-20
+    @test f(params(cm) .+ 0.1) > 0.0
+
+    # Two plain vectors would broadcast to the diagonal, not the image: rejected
+    # at construction instead of silently fitting the wrong thing.
+    @test_throws ArgumentError ObjectiveFunction(cm, (col, vec(row)), img)
+end
+
+@testitem "kernel: a matrix template drives the whole pipeline" tags = [:kernel] begin
+    using AstroFit
+
+    struct MeanPSF <: AbstractKernel end
+    function AstroFit.render(::MeanPSF, im::AbstractMatrix)
+        ny, nx = size(im)
+        out = similar(im)
+        for j in 1:nx, i in 1:ny
+            acc = zero(eltype(out))
+            n = 0
+            for dj in (-1):1, di in (-1):1
+                ii, jj = i + di, j + dj
+                (1 <= ii <= ny && 1 <= jj <= nx) || continue
+                acc += im[ii, jj]
+                n += 1
+            end
+            out[i, j] = acc / n
+        end
+        return out
+    end
+
+    cm = @model begin
+        src = Gaussian2D(amplitude = 3.0, x0 = 5.0, y0 = 4.0, sigma = 1.2, q = 1.0, theta = 0.0)
+        psf = MeanPSF()
+        src |> psf
+    end
+
+    # The template recurses down to the pointwise leaf, which turns it into the
+    # image the kernel then convolves.
+    img = zeros(9, 7)
+    conv = render(cm, img)
+    @test size(conv) == size(img)
+    @test maximum(conv) < maximum(render(cm.src, img))
+    @test conv == render(cm, axes(img, 1), reshape(axes(img, 2), 1, :))
+
+    out = similar(conv)
+    @test render!(out, cm) === out
+    @test out == conv
+
+    # A bare kernel still reads a matrix as intensities, not as a grid template.
+    @test render(MeanPSF(), ones(4, 4)) ≈ ones(4, 4)
+
+    # And a vector-only kernel handed a matrix still says what it needs.
+    @test_throws ArgumentError render(GaussianPSF(sigma = 1.0), rand(4, 4))
+end

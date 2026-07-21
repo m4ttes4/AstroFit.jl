@@ -122,7 +122,7 @@ end
     u = params(cm)
 
     f = ObjectiveFunction(cm, (xs, ys), y)
-    @test f(u) ≈ 0.0 atol = 1e-20
+    @test f(u) ≈ 0.0 atol = 1.0e-20
     @test f(u .+ 0.1) > 0.0
 end
 
@@ -217,4 +217,21 @@ end
     a2 = @allocated f2(u)
     @test a1 == a2
     @test a2 < 512
+
+    # Grid-form coordinates read through a lazy Broadcasted: nothing is
+    # materialized there either, at either grid size.
+    cm2 = @model begin
+        g = Gaussian2D(amplitude = 2.0, x0 = 0.0, y0 = 0.0, sigma = 1.0, q = 1.0, theta = 0.0)
+        g
+    end
+    mk2(n) = (
+        c = collect(range(-3, 3; length = n));
+        col = c; row = reshape(c, 1, :);
+        ObjectiveFunction(cm2, (col, row), render(cm2, col, row))
+    )
+    g1, g2 = mk2(10), mk2(60)
+    v = params(cm2)
+    g1(v); g2(v)
+    @test @allocated(g1(v)) == @allocated(g2(v))
+    @test @allocated(g2(v)) < 512
 end
