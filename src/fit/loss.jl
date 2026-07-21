@@ -67,6 +67,29 @@ function _chi2p(model, coords, y, err)
     return sum(i -> abs2((μ[i] - y[i]) / err[i]), eachindex(y))
 end
 
+# 1D fast path — direct indexing, no map/splat
+function _chi2p(model, coords::Tuple{AbstractVector}, y, ::Nothing)
+    x = coords[1]
+    fi = firstindex(y)
+    acc = @inbounds abs2(render(model, x[fi]) - y[fi])
+    @inbounds for i in (fi + 1):lastindex(y)
+        acc += abs2(render(model, x[i]) - y[i])
+    end
+    return acc
+end
+
+function _chi2p(model, coords::Tuple{AbstractVector}, y, err)
+    x = coords[1]
+    fi = firstindex(y)
+    r = @inbounds render(model, x[fi]) - y[fi]
+    acc = abs2(r / @inbounds err[fi])
+    @inbounds for i in (fi + 1):lastindex(y)
+        r = render(model, x[i]) - y[i]
+        acc += abs2(r / err[i])
+    end
+    return acc
+end
+
 # One rule covers both coordinate forms: the coordinates must broadcast to
 # exactly the shape of `y`. That admits the flat point list (co-shaped arrays)
 # and the grid form (one axis per dimension — a column `x` against a row `y`),
