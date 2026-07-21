@@ -17,8 +17,6 @@ struct CompiledModel{T, P}
     priors::P
 end
 
-CompiledModel(tree) = CompiledModel(tree, nothing)
-
 # Navigation: cm.g1 returns the Leaf tagged :g1. Plain dispatch recursion — `name` is in
 # the type (Val{name}/Leaf{name}), so each leaf resolves statically to the leaf or
 # `nothing`, and `h === nothing` folds at compile time. No @generated needed.
