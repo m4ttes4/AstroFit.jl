@@ -654,3 +654,21 @@ end
     @test sprint(show, cm) == "(line |> psf) + cont"
     @test occursin("psf", sprint(show, MIME"text/plain"(), cm))
 end
+
+@testitem "kernel: array fields display compactly" tags = [:kernel] begin
+    using AstroFit
+
+    struct ImagePSF{M <: AbstractMatrix} <: AstroFit.AbstractKernel
+        kernel::M
+    end
+    AstroFit.render(k::ImagePSF, img::AbstractMatrix) = img
+
+    cm = @model begin
+        line = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.0)
+        psf = ImagePSF(fill(0.25, 4, 4))
+        line |> psf
+    end
+    out = sprint(show, MIME"text/plain"(), cm)
+    @test occursin("4×4 Matrix{Float64}", out)
+    @test !occursin("0.25", out)   # no element dump
+end

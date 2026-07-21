@@ -14,6 +14,7 @@ _opsym(::Pipe) = "|>"
 
 _leafname(::Leaf{n}) where {n} = n
 _fmt(v::AbstractFloat) = string(round(v; sigdigits = 2))
+_fmt(v::AbstractArray) = summary(v)   # "101×101 Matrix{Float64}", not the whole dump
 _fmt(v) = string(v)
 
 # --- compact one-line expression: leaves print as their name, bare components as-is.
