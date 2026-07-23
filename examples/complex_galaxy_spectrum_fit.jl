@@ -31,10 +31,10 @@ end
 
 AstroFit.render(m::RedshiftAxis1D, lambda::Number) = lambda / (1 + m.z)
 
-Base.@kwdef struct DustScreen1D{T <: Real} <: AbstractModel
-    a_v::T = 0.0
-    lambda_ref::T = L_REF
-    slope::T = 1.0
+Base.@kwdef struct DustScreen1D{A, B, C} <: AbstractModel
+    a_v::A = 0.0
+    lambda_ref::B = L_REF
+    slope::C = 1.0
 end
 
 # Multiplicative dust screen (rest-frame): power-law attenuation, stronger in
@@ -273,7 +273,7 @@ err = 0.055 .+ 0.018 .* sqrt.(clamp.(flux_true, 0.0, Inf))
 flux = flux_true .+ err .* randn(length(lambda))
 
 prob = OptimizationProblem(cm, lambda, flux, err)
-sol = solve(prob, Fminbox(LBFGS()); maxiters = 1200)
+sol = solve(prob, LBFGS(); maxiters = 1200)
 fit = withparams(cm, sol.u)
 flux_fit = render(fit, lambda)
 resid_sigma = (flux .- flux_fit) ./ err
