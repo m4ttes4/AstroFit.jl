@@ -213,12 +213,12 @@ This is how you check values and constraint state at any point: before
 fitting, after fitting, or while debugging.
 
 
-## Kernels and PSF Convolution
+## Kernels (e.g. PSF Convolution)
 
-Most models answer "what is the value at this coordinate?" — one point at a
+Most models answer "what is the value at this coordinate?"  one point at a
 time. A PSF convolution can't: the value at one point depends on its
 neighbours. Those are **kernels**, and they are ordinary models in every way
-that matters — they live in the tree, they compose with the usual operators,
+that matters they live in the tree, they compose with the usual operators,
 they carry constraints, and they fit.
 
 ```julia
@@ -270,8 +270,7 @@ Two rules:
 ### Fitting a kernel
 
 Kernel fields default to `Fixed`, because a PSF is usually a known calibration
-input — and a free integer field (a width in samples) would break ForwardDiff
-outright. Opt in explicitly when you do want to fit one:
+input Opt in explicitly when you do want to fit one:
 
 ```julia
 cm = @free cm.psf.sigma
@@ -279,7 +278,7 @@ cm = @free cm.psf.sigma
 
 Gradients flow through the convolution, so kernel models work with
 `OptimizationProblem` and ForwardDiff exactly like pointwise ones. Note that a
-free PSF width is often degenerate with the intrinsic line width — only their
+free PSF width is often degenerate with the intrinsic line width only their
 combination is identifiable from the data.
 
 ### Cost
@@ -312,7 +311,7 @@ A `Tied` parameter references one or more free (or bounded) masters. Its
 value is always derived, never independent, so the optimizer never sees it.
 Ties cannot chain: every master must itself be `Free` or `Bounded`.
 
-### `@constrain` block
+### `@constrain` blocks
 
 The most common way to add constraints. Inside the block, leaf names are
 bare (no `spec.` prefix), and each constraint kind has its own operator:
@@ -799,18 +798,50 @@ end
 end
 ```
 
-![Double Gaussian fit](examples/double_gaussian_fit.png)
+![Double Gaussian fit](examples/main/double_gaussian_fit.png)
 
-See [`examples/double_gaussian_fit.jl`](examples/double_gaussian_fit.jl) for the
+See [`examples/main/double_gaussian_fit.jl`](examples/main/double_gaussian_fit.jl) for the
 full script.
+
+### Na I D absorption doublet through an instrumental PSF (1D)
+
+The Na I D doublet in absorption plus a He I emission line, blurred by a
+simulated instrumental PSF wide enough to partially blend the two Na lines.
+Every tie has a physical reason: the doublet separation is atomic physics
+(free systemic velocity, fixed splitting), the depth ratio is the 2:1 and He I is tied to the same
+systemic velocity but keeps its own width since it is a different gas. The PSF is a known calibration, so `psf.sigma` stays `Fixed`; the width the fit
+recovers is the *intrinsic*, deconvolved line width.
+
+```julia
+cm = @model begin
+    cont = Linear1D(slope = 0.0, intercept = 1.0)
+    d2   = Gaussian1D(amplitude = -0.4, mean = L_NAD_D2, sigma = 0.8)
+    d1   = Gaussian1D(amplitude = -0.2, mean = L_NAD_D1, sigma = 0.8)
+    hei  = Gaussian1D(amplitude = 0.3, mean = L_HEI, sigma = 1.2)
+    psf  = GaussianPSF(sigma = SIGMA_INST / STEP)   # instrumental resolution, in samples
+    (cont + d2 + d1 + hei) |> psf
+end
+
+@constrain cm begin
+    d1.amplitude -> 0.5 * d2.amplitude             # optically thin 2:1
+    d1.mean      -> d2.mean + (L_NAD_D1 - L_NAD_D2) # atomic separation
+    d1.sigma     -> d2.sigma                       # same gas
+    hei.mean     -> d2.mean + (L_HEI - L_NAD_D2)   # same systemic velocity
+    psf.sigma                                      # known calibration, fixed
+    # ... bounds on amplitudes, widths, and line position
+end
+```
+
+![Na I D doublet fit](examples/main/na_doublet_fit.png)
+
+See [`examples/main/na_doublet_fit.jl`](examples/main/na_doublet_fit.jl) for
+the full script.
 
 ### Blended galaxies bulge+disk decomposition (2D)
 
 Two partially overlapping galaxies, each decomposed into a Gaussian bulge and an
-exponential disk (Sersic n=1). All four components are elliptical (`q`, `theta`
-free). Within each galaxy, the bulge center and position angle are tied to the
-disk. Sersic indices are fixed. 18 free parameters total, fitted with
-`Fminbox(LBFGS())` via Optimization.jl.
+exponential disk. Within each galaxy, the bulge center and position angle are tied to the
+disk. 20 free parameters total.
 
 ```julia
 cm = @model begin
@@ -860,26 +891,23 @@ end
 end
 ```
 
-![Blended galaxies fit](examples/blended_galaxies_fit.png)
+![Blended galaxies fit](examples/main/blended_galaxies_fit.png)
 
-See [`examples/blended_galaxies_fit.jl`](examples/blended_galaxies_fit.jl) for
+See [`examples/main/blended_galaxies_fit.jl`](examples/main/blended_galaxies_fit.jl) for
 the full script.
 
 ### Redshifted galaxy spectrum flagship fit (1D)
 
 This is the kind of fit I built AstroFit for. The spectrum is a synthetic AGN
-host-galaxy covering the Hα/[NII]/[SII] window, the region where you typically
-have the most going on at once: a curved continuum (linear + power law), narrow
-Balmer emission from the host (Hα, Hβ), broad Balmer components from the AGN,
-forbidden-line doublets ([OIII] 4959/5007, [NII] 6548/6583, [SII] 6716/6731),
-Na D absorption, and a redshift that moves everything to the observer frame.
+host-galaxy covering the Balmer Break/Halpha window, the region where you typically
+have the most going on at once: a curved continuum, narrow
+Balmer emission from the host (Hα, Hβ), broad Balmer components from the AGN, forbidden-line doublets ([OIII] 4959/5007, [NII] 6548/6583, [SII] 6716/6731), a Balmer breack, Na D absorption, and a redshift that moves everything to the observer frame.
 
-The model has 43 raw parameters, but most of them aren't independent. Doublet
+The model has 67 raw parameters, but most of them aren't independent. Doublet
 ratios like [OIII] and [NII] are set by atomic physics, Hβ is tied to Hα through
 the Balmer decrement, all narrow lines share one velocity width, broad lines
 share another, and rest wavelengths don't move. Once you write those constraints
-down, only 15 parameters are actually free, and those are the only ones the
-optimizer touches.
+down, only 23 parameters are actually free
 
 ```julia
 cm = @model begin
@@ -927,9 +955,14 @@ end
 end
 ```
 
-![Complex galaxy spectrum fit](examples/complex_galaxy_spectrum_fit.png)
+> [!NOTE]
+> Please note that this example is not meant to represent a physically realistic spectrum
+> it packs in every kind of constraint the library supports (fixes, bounds, ties, coordinate transforms) mostly to show how far the composition and
+> constraint system stretches on a single model
 
-See [`examples/complex_galaxy_spectrum_fit.jl`](examples/complex_galaxy_spectrum_fit.jl)
+![Complex galaxy spectrum fit](examples/main/complex_galaxy_spectrum_fit.png)
+
+See [`examples/main/complex_galaxy_spectrum_fit.jl`](examples/main/complex_galaxy_spectrum_fit.jl)
 for the full script.
 
 ---

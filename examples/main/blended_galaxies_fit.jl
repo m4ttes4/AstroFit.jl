@@ -1,8 +1,10 @@
 # Bulge+disk decomposition of two blended galaxies with ellipticity.
-# Bulge: Gaussian2D, disk: Sersic2D (n=1, exponential).
-# Within each galaxy, bulge and disk share the same center and position angle.
+# Galaxy 1: inclined disk-dominated spiral (exponential disk, n~1).
+# Galaxy 2: bulge-dominated early type (concentrated spheroid, n~3.5).
+# Within each galaxy, bulge and disk share the same center and position angle;
+# the Sersic index n is a free parameter of the fit.
 #
-# Run with:  julia --project=. examples/blended_galaxies_fit.jl
+# Run with:  julia --project=examples examples/main/blended_galaxies_fit.jl
 
 using AstroFit
 using Optimization, OptimizationOptimJL, ForwardDiff
@@ -13,10 +15,10 @@ using Random
 # 1. True scene — two elliptical galaxies, partially overlapping
 # ---------------------------------------------------------------------------
 true_scene = @model begin
-    bulge1 = Gaussian2D(amplitude = 60.0, x0 = -2.0, y0 = -1.0, sigma = 1.0, q = 0.7, theta = 0.8)
-    disk1 = Sersic2D(amplitude = 20.0, x0 = -2.0, y0 = -1.0, r_eff = 3.5, n = 1.0, q = 0.5, theta = 0.8)
-    bulge2 = Gaussian2D(amplitude = 35.0, x0 = 3.0, y0 = 1.5, sigma = 0.7, q = 0.8, theta = -0.5)
-    disk2 = Sersic2D(amplitude = 12.0, x0 = 3.0, y0 = 1.5, r_eff = 2.8, n = 1.0, q = 0.6, theta = -0.5)
+    bulge1 = Gaussian2D(amplitude = 25.0, x0 = -2.0, y0 = -1.0, sigma = 0.8, q = 0.75, theta = 0.8)
+    disk1 = Sersic2D(amplitude = 50.0, x0 = -2.0, y0 = -1.0, r_eff = 2.5, n = 1.0, q = 0.38, theta = 0.8)
+    bulge2 = Gaussian2D(amplitude = 90.0, x0 = 3.0, y0 = 1.5, sigma = 1.4, q = 0.9, theta = -0.5)
+    disk2 = Sersic2D(amplitude = 15.0, x0 = 3.0, y0 = 1.5, r_eff = 1.6, n = 3.5, q = 0.85, theta = -0.5)
     bulge1 + disk1 + bulge2 + disk2
 end
 
@@ -37,17 +39,18 @@ err = fill(σ_noise, size(X))
 # 3. Fitting model — deliberately bad initial guess + constraints
 # ---------------------------------------------------------------------------
 cm = @model begin
-    bulge1 = Gaussian2D(amplitude = 40.0, x0 = -3.5, y0 = 0.5, sigma = 1.8, q = 0.9, theta = 0.3)
-    disk1 = Sersic2D(amplitude = 12.0, x0 = -3.5, y0 = 0.5, r_eff = 5.0, n = 1.0, q = 0.7, theta = 0.3)
-    bulge2 = Gaussian2D(amplitude = 20.0, x0 = 4.5, y0 = 0.0, sigma = 1.2, q = 0.9, theta = -0.2)
-    disk2 = Sersic2D(amplitude = 8.0, x0 = 4.5, y0 = 0.0, r_eff = 4.0, n = 1.0, q = 0.8, theta = -0.2)
+    bulge1 = Gaussian2D(amplitude = 15.0, x0 = -3.5, y0 = 0.5, sigma = 1.5, q = 0.9, theta = 0.3)
+    disk1 = Sersic2D(amplitude = 35.0, x0 = -3.5, y0 = 0.5, r_eff = 3.5, n = 1.5, q = 0.5, theta = 0.3)
+    bulge2 = Gaussian2D(amplitude = 60.0, x0 = 4.5, y0 = 0.0, sigma = 1.0, q = 0.9, theta = -0.2)
+    disk2 = Sersic2D(amplitude = 8.0, x0 = 4.5, y0 = 0.0, r_eff = 2.5, n = 2.0, q = 0.9, theta = -0.2)
     bulge1 + disk1 + bulge2 + disk2
 end
 
 @constrain cm begin
-    # fix disk Sersic index
-    disk1.n
-    disk2.n
+    # free Sersic index: n~1 (exponential) vs n~3.5 (concentrated) is what
+    # morphologically separates the two galaxies
+    disk1.n in (0.5, 6.0)
+    disk2.n in (0.5, 6.0)
     # bulge center and PA tied to its disk
     bulge1.x0 -> disk1.x0
     bulge1.y0 -> disk1.y0
@@ -55,24 +58,26 @@ end
     bulge2.x0 -> disk2.x0
     bulge2.y0 -> disk2.y0
     bulge2.theta -> disk2.theta
-    # physical bounds
-    bulge1.amplitude in (0.1, 300.0)
-    bulge1.sigma in (0.1, 5.0)
-    bulge1.q in (0.1, 1.0)
-    disk1.amplitude in (0.1, 200.0)
-    disk1.x0 in (-6.0, 2.0)
-    disk1.y0 in (-5.0, 3.0)
-    disk1.r_eff in (0.3, 8.0)
-    disk1.q in (0.1, 1.0)
+    # loose physical bounds: positivity and the image footprint, little more.
+    # theta stays in (-pi/2, pi/2] territory: theta and theta+pi are the same
+    # ellipse, so a wider window would only create duplicate minima.
+    bulge1.amplitude in (0.0, 500.0)
+    bulge1.sigma in (0.05, 10.0)
+    bulge1.q in (0.05, 1.0)
+    disk1.amplitude in (0.0, 500.0)
+    disk1.x0 in (-8.0, 8.0)
+    disk1.y0 in (-8.0, 8.0)
+    disk1.r_eff in (0.1, 10.0)
+    disk1.q in (0.05, 1.0)
     disk1.theta in (-1.6, 1.6)
-    bulge2.amplitude in (0.1, 300.0)
-    bulge2.sigma in (0.1, 5.0)
-    bulge2.q in (0.1, 1.0)
-    disk2.amplitude in (0.1, 200.0)
-    disk2.x0 in (-1.0, 7.0)
-    disk2.y0 in (-3.0, 5.0)
-    disk2.r_eff in (0.3, 8.0)
-    disk2.q in (0.1, 1.0)
+    bulge2.amplitude in (0.0, 500.0)
+    bulge2.sigma in (0.05, 10.0)
+    bulge2.q in (0.05, 1.0)
+    disk2.amplitude in (0.0, 500.0)
+    disk2.x0 in (-8.0, 8.0)
+    disk2.y0 in (-8.0, 8.0)
+    disk2.r_eff in (0.1, 10.0)
+    disk2.q in (0.05, 1.0)
     disk2.theta in (-1.6, 1.6)
 end
 
@@ -122,5 +127,5 @@ Label(
     fontsize = 16, font = :bold
 )
 display(fig)
-save("examples/blended_galaxies_fit.png", fig; px_per_unit = 2)
-println("saved → examples/blended_galaxies_fit.png")
+save(joinpath(@__DIR__, "blended_galaxies_fit.png"), fig; px_per_unit = 2)
+println("saved → ", joinpath(@__DIR__, "blended_galaxies_fit.png"))
