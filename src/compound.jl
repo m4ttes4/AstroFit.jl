@@ -23,12 +23,7 @@ struct Pipe{L <: AbstractModel, R <: AbstractModel} <: AbstractModel
     right::R
 end
 
-# NOTE if not inlined performance are not good because of tree recursion
-@inline render(m::Sum, x::Number...) = render(m.left, x...) + render(m.right, x...)
-@inline render(m::Difference, x::Number...) = render(m.left, x...) - render(m.right, x...)
-@inline render(m::Product, x::Number...) = render(m.left, x...) * render(m.right, x...)
-@inline render(m::Quotient, x::Number...) = render(m.left, x...) / render(m.right, x...)
-@inline render(m::Pipe, x::Number...) = render(m.right, render(m.left, x...))
+const _COMPOUND = Union{Sum, Difference, Product, Quotient, Pipe}
 
 Base.:+(a::AbstractModel, b::AbstractModel) = Sum(a, b)
 Base.:-(a::AbstractModel, b::AbstractModel) = Difference(a, b)

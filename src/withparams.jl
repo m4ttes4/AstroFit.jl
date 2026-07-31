@@ -74,7 +74,7 @@ function _treeexpr(T, acc, slots)
             _fieldexpr(fieldtypes(C)[i], name, fieldnames(M)[i], i, acc, slots)
                 for i in 1:fieldcount(M)
         )
-        :(Leaf{$(QuoteNode(name))}($(constructorof(M))(promote($(fields...))...), ($acc).constraints))
+        :(Leaf{$(QuoteNode(name))}($(constructorof(M))($(fields...)), ($acc).constraints))
     else
         L, R = T.parameters
         :(
@@ -174,8 +174,11 @@ function withparams(cm::CompiledModel; kwargs...)
     names = paramnames(cm)
     for (k, v) in kwargs
         i = findfirst(==(k), names)
-        i === nothing && throw(ArgumentError(
-            "withparams: no free parameter `$k` — available: $(join(names, ", "))"))
+        i === nothing && throw(
+            ArgumentError(
+                "withparams: no free parameter `$k` — available: $(join(names, ", "))"
+            )
+        )
         p[i] = v
     end
     return withparams(cm, p)

@@ -29,6 +29,27 @@
     @test rebuilt.right.model.sigma == 1.5
 end
 
+@testitem "params is a concrete vector even for mixed field types" tags = [:core, :params] begin
+    using AstroFit
+
+    # Fields no longer share a type parameter, so an integer literal stays an Int in the
+    # struct. Without promotion in `params` the optimizer would get a Vector{Real}.
+    cm = @model begin
+        g = Gaussian1D(amplitude = 1, mean = 0.0, sigma = 1.0)
+        g
+    end
+    @test cm.g.model.amplitude === 1
+    @test params(cm) isa Vector{Float64}
+
+    # every parameter fixed: no values to promote, still a usable empty vector
+    allfixed = @fix cm.g.amplitude
+    allfixed = @fix allfixed.g.mean
+    allfixed = @fix allfixed.g.sigma
+    @test nfree(allfixed) == 0
+    @test params(allfixed) isa Vector{Float64}
+    @test isempty(params(allfixed))
+end
+
 @testitem "bounds excludes fixed and tied slots" tags = [:core, :params, :tied] begin
     using AstroFit
 
@@ -199,7 +220,11 @@ end
 
     # unknown name throws with the available names listed
     @test_throws ArgumentError withparams(cm; bogus = 1.0)
-    err = try; withparams(cm; bogus = 1.0); catch e; e; end
+    err = try
+        withparams(cm; bogus = 1.0)
+    catch e
+        e
+    end
     @test occursin("left_amplitude", err.msg)
 end
 

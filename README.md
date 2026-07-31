@@ -43,6 +43,7 @@ Pkg.add(url="https://github.com/m4ttes4/AstroFit.jl")
 - [Motivation](#motivation)
 - [Quick Start](#quick-start)
 - [Building Models](#building-models)
+- [Kernels and PSF Convolution](#kernels-and-psf-convolution)
 - [Adding Constraints](#adding-constraints)
 - [Working With Parameters](#working-with-parameters)
 - [Fitting](#fitting)
@@ -212,6 +213,84 @@ This is how you check values and constraint state at any point: before
 fitting, after fitting, or while debugging.
 
 
+## Kernels (e.g. PSF Convolution)
+
+Most models answer "what is the value at this coordinate?"  one point at a
+time. A PSF convolution can't: the value at one point depends on its
+neighbours. Those are **kernels**, and they are ordinary models in every way
+that matters they live in the tree, they compose with the usual operators,
+they carry constraints, and they fit.
+
+```julia
+cm = @model begin
+    line = Gaussian1D(amplitude = 2.0, mean = 6563.0, sigma = 1.0)
+    cont = Const1D(value = 0.5)
+    psf  = GaussianPSF(sigma = 2.0)      # width in SAMPLES, not Å
+    (line |> psf) + cont                 # convolve the line, leave the continuum alone
+end
+
+render(cm, x)                            # whole array in, whole array out
+```
+
+`|>` means what it always meant — feed the left output into the right — and the
+result composes further, so the convolved component is just another term:
+
+```julia
+(line |> psf) + cont        # convolved line on an unconvolved continuum
+(line |> psf) * transmission
+line |> psf1 |> psf2        # chained
+((line + wing) |> psf) + cont
+```
+
+### Writing your own
+
+A kernel subtypes `AbstractKernel` and defines the **array** render instead of
+the scalar one:
+
+```julia
+struct BoxKernel <: AbstractKernel
+    width::Int
+end
+
+function AstroFit.render(k::BoxKernel, ys::AbstractVector)
+    # ... return an array the same size as ys
+end
+```
+
+Two rules:
+
+- **Intensities in, intensities out.** The array a kernel receives is the values
+  produced upstream, not coordinates. Array index *is* the grid, so widths are
+  in samples and the grid is assumed uniform — convert physical widths yourself
+  when you build the kernel.
+- **Same size out as in.** How you treat the edges (clamp, zero-pad,
+  renormalize) is your kernel's choice; `GaussianPSF` renormalizes so a flat
+  signal stays flat all the way to the borders.
+
+### Fitting a kernel
+
+Kernel fields default to `Fixed`, because a PSF is usually a known calibration
+input Opt in explicitly when you do want to fit one:
+
+```julia
+cm = @free cm.psf.sigma
+```
+
+Gradients flow through the convolution, so kernel models work with
+`OptimizationProblem` and ForwardDiff exactly like pointwise ones. Note that a
+free PSF width is often degenerate with the intrinsic line width only their
+combination is identifiable from the data.
+
+### Cost
+
+A kernel-free model is untouched by any of this. Whether a subtree is pointwise
+is answered from its *type*, so it folds away at compile time: a model with no
+kernel takes the same fused single-pass broadcast it always did, and its χ² loop
+still allocates nothing. Inside a kernel model, fusion breaks only where the
+kernel actually sits — `(a + b) |> psf` renders `a + b` in one fused pass before
+convolving.
+
+
 ## Adding Constraints
 
 After `@model`, all parameters are free and the optimizer can move any of them.
@@ -232,7 +311,7 @@ A `Tied` parameter references one or more free (or bounded) masters. Its
 value is always derived, never independent, so the optimizer never sees it.
 Ties cannot chain: every master must itself be `Free` or `Bounded`.
 
-### `@constrain` block
+### `@constrain` blocks
 
 The most common way to add constraints. Inside the block, leaf names are
 bare (no `spec.` prefix), and each constraint kind has its own operator:
@@ -586,9 +665,9 @@ get a `Chains` object directly), PairPlots.jl for corner plots, and so on.
 
 The main thing I want to add is a macro for defining new model components. Right
 now, bringing your own model means writing the full boilerplate by hand: the
-`@kwdef struct`, a `promote` constructor, and a `render` method (see
+`@kwdef struct` with one type parameter per field, and a `render` method (see
 [Extending AstroFit](#extending-astrofit)). It is not hard, but it is the same
-four blocks every time, and it is the steepest part of the learning curve. I want
+blocks every time, and it is the steepest part of the learning curve. I want
 that barrier gone.
 
 The idea is to let you declare a component from a single formula:
@@ -603,8 +682,8 @@ The idea is to let you declare a component from a single formula:
 
 The coordinates come before the semicolon, the parameters (with their defaults)
 after it. From that one line the macro would generate everything the model
-protocol needs: the parametric `@kwdef struct <: AbstractModel`, the `promote`
-constructor that keeps the field types uniform, and the scalar `render` method
+protocol needs: the `@kwdef struct <: AbstractModel` with one `<:Real` type
+parameter per field, and the scalar `render` method
 (rewriting each bare parameter name into a field access on the model). I would
 not generate a hand-tuned `render!`. The generic broadcasting fallback already
 covers it, and the per-model loops in the zoo stay as opt-in micro-optimisations.
@@ -614,13 +693,11 @@ already are, so it drops straight into `@model`, `@constrain`, and the fitting
 path:
 
 ```julia
-Base.@kwdef struct Gaussian1D{T<:Real} <: AbstractModel
-    amplitude::T = 1.0
-    mean::T = 0.0
-    sigma::T = 1.0
+Base.@kwdef struct Gaussian1D{A<:Real, M<:Real, S<:Real} <: AbstractModel
+    amplitude::A = 1.0
+    mean::M = 0.0
+    sigma::S = 1.0
 end
-Gaussian1D(amplitude::Real, mean::Real, sigma::Real) =
-    Gaussian1D(promote(amplitude, mean, sigma)...)
 render(m::Gaussian1D, x::Number) =
     m.amplitude * exp(-((x - m.mean) / m.sigma)^2 / 2)
 ```
@@ -721,18 +798,50 @@ end
 end
 ```
 
-![Double Gaussian fit](examples/double_gaussian_fit.png)
+![Double Gaussian fit](examples/main/double_gaussian_fit.png)
 
-See [`examples/double_gaussian_fit.jl`](examples/double_gaussian_fit.jl) for the
+See [`examples/main/double_gaussian_fit.jl`](examples/main/double_gaussian_fit.jl) for the
 full script.
+
+### Na I D absorption doublet through an instrumental PSF (1D)
+
+The Na I D doublet in absorption plus a He I emission line, blurred by a
+simulated instrumental PSF wide enough to partially blend the two Na lines.
+Every tie has a physical reason: the doublet separation is atomic physics
+(free systemic velocity, fixed splitting), the depth ratio is the 2:1 and He I is tied to the same
+systemic velocity but keeps its own width since it is a different gas. The PSF is a known calibration, so `psf.sigma` stays `Fixed`; the width the fit
+recovers is the *intrinsic*, deconvolved line width.
+
+```julia
+cm = @model begin
+    cont = Linear1D(slope = 0.0, intercept = 1.0)
+    d2   = Gaussian1D(amplitude = -0.4, mean = L_NAD_D2, sigma = 0.8)
+    d1   = Gaussian1D(amplitude = -0.2, mean = L_NAD_D1, sigma = 0.8)
+    hei  = Gaussian1D(amplitude = 0.3, mean = L_HEI, sigma = 1.2)
+    psf  = GaussianPSF(sigma = SIGMA_INST / STEP)   # instrumental resolution, in samples
+    (cont + d2 + d1 + hei) |> psf
+end
+
+@constrain cm begin
+    d1.amplitude -> 0.5 * d2.amplitude             # optically thin 2:1
+    d1.mean      -> d2.mean + (L_NAD_D1 - L_NAD_D2) # atomic separation
+    d1.sigma     -> d2.sigma                       # same gas
+    hei.mean     -> d2.mean + (L_HEI - L_NAD_D2)   # same systemic velocity
+    psf.sigma                                      # known calibration, fixed
+    # ... bounds on amplitudes, widths, and line position
+end
+```
+
+![Na I D doublet fit](examples/main/na_doublet_fit.png)
+
+See [`examples/main/na_doublet_fit.jl`](examples/main/na_doublet_fit.jl) for
+the full script.
 
 ### Blended galaxies bulge+disk decomposition (2D)
 
 Two partially overlapping galaxies, each decomposed into a Gaussian bulge and an
-exponential disk (Sersic n=1). All four components are elliptical (`q`, `theta`
-free). Within each galaxy, the bulge center and position angle are tied to the
-disk. Sersic indices are fixed. 18 free parameters total, fitted with
-`Fminbox(LBFGS())` via Optimization.jl.
+exponential disk. Within each galaxy, the bulge center and position angle are tied to the
+disk. 20 free parameters total.
 
 ```julia
 cm = @model begin
@@ -782,26 +891,23 @@ end
 end
 ```
 
-![Blended galaxies fit](examples/blended_galaxies_fit.png)
+![Blended galaxies fit](examples/main/blended_galaxies_fit.png)
 
-See [`examples/blended_galaxies_fit.jl`](examples/blended_galaxies_fit.jl) for
+See [`examples/main/blended_galaxies_fit.jl`](examples/main/blended_galaxies_fit.jl) for
 the full script.
 
 ### Redshifted galaxy spectrum flagship fit (1D)
 
 This is the kind of fit I built AstroFit for. The spectrum is a synthetic AGN
-host-galaxy covering the Hα/[NII]/[SII] window, the region where you typically
-have the most going on at once: a curved continuum (linear + power law), narrow
-Balmer emission from the host (Hα, Hβ), broad Balmer components from the AGN,
-forbidden-line doublets ([OIII] 4959/5007, [NII] 6548/6583, [SII] 6716/6731),
-Na D absorption, and a redshift that moves everything to the observer frame.
+host-galaxy covering the Balmer Break/Halpha window, the region where you typically
+have the most going on at once: a curved continuum, narrow
+Balmer emission from the host (Hα, Hβ), broad Balmer components from the AGN, forbidden-line doublets ([OIII] 4959/5007, [NII] 6548/6583, [SII] 6716/6731), a Balmer breack, Na D absorption, and a redshift that moves everything to the observer frame.
 
-The model has 43 raw parameters, but most of them aren't independent. Doublet
+The model has 67 raw parameters, but most of them aren't independent. Doublet
 ratios like [OIII] and [NII] are set by atomic physics, Hβ is tied to Hα through
 the Balmer decrement, all narrow lines share one velocity width, broad lines
 share another, and rest wavelengths don't move. Once you write those constraints
-down, only 15 parameters are actually free, and those are the only ones the
-optimizer touches.
+down, only 23 parameters are actually free
 
 ```julia
 cm = @model begin
@@ -849,9 +955,14 @@ end
 end
 ```
 
-![Complex galaxy spectrum fit](examples/complex_galaxy_spectrum_fit.png)
+> [!NOTE]
+> Please note that this example is not meant to represent a physically realistic spectrum
+> it packs in every kind of constraint the library supports (fixes, bounds, ties, coordinate transforms) mostly to show how far the composition and
+> constraint system stretches on a single model
 
-See [`examples/complex_galaxy_spectrum_fit.jl`](examples/complex_galaxy_spectrum_fit.jl)
+![Complex galaxy spectrum fit](examples/main/complex_galaxy_spectrum_fit.png)
+
+See [`examples/main/complex_galaxy_spectrum_fit.jl`](examples/main/complex_galaxy_spectrum_fit.jl)
 for the full script.
 
 ---
@@ -870,15 +981,46 @@ Your struct needs to subtype `AbstractModel` and hold its parameters as fields.
 Use `@kwdef` so you get keyword constructors for free:
 
 ```julia
-Base.@kwdef struct Blackbody1D{T<:Real} <: AbstractModel
-    temperature::T = 5000.0
-    norm::T        = 1.0
+Base.@kwdef struct Blackbody1D{T1<:Real, T2<:Real} <: AbstractModel
+    temperature::T1 = 5000.0
+    norm::T2        = 1.0
 end
 ```
 
-One thing to watch: the type parameter `T` should be `<:Real`, not `Float64`.
-ForwardDiff works by passing dual numbers through your model. If you hardcode
-`Float64`, gradient-based fitting will break.
+Two things to watch. Each fittable field gets **its own** type parameter, and
+each of those parameters should be `<:Real`, not `Float64`. ForwardDiff works by
+passing dual numbers through your model, so a hardcoded `Float64` breaks
+gradient-based fitting.
+
+The per-field parameter matters just as much. AstroFit rebuilds a model field by
+field, and during differentiation a free field arrives as a dual number while a
+fixed one keeps its `Float64` value — so the fields will not always agree on a
+type. Share one parameter across two fields and the model works until the user
+fixes one of them, then fails with a `MethodError` from inside a gradient.
+
+#### What a field is
+
+Nothing is coerced: **each field keeps whatever type it is given**, and is
+carried through reconstruction untouched.
+
+> Declare a field with its own `<:Real` parameter if you might ever want to fit
+> it. Give it a concrete type (`Int`, `Bool`, `Symbol`, an array) if it is an
+> internal value.
+
+```julia
+struct InstrumentalPSF{S<:Real, C<:Real, V<:AbstractVector} <: AbstractKernel
+    sigma::S          # fittable — its own parameter, holds duals
+    scale::C          # fittable — its own parameter, independent of sigma
+    taps::V           # internal — a measured kernel is data, not a parameter
+    halfwidth::Int    # internal — a count in samples
+    normalize::Bool   # internal — a flag
+    edge::Symbol      # internal — an edge policy
+end
+```
+
+An internal field of any type needs no special handling — a gradient-based
+optimizer was never going to perturb a `Symbol` or an `Int`, and since nothing
+is promoted, nothing tries to turn one into a dual number.
 
 ### Step 2: define `render`
 
@@ -961,6 +1103,43 @@ end
 ```
 
 This is purely optional. Define it when profiling shows it matters.
+
+One rule if your model takes more than one coordinate: **broadcast, do not write a
+linear `eachindex(out, xs, ys)` loop.** A linear loop demands identical axes, and
+that rejects two of the three coordinate forms below — including the one a PSF
+needs. The built-in 2D models broadcast a shared helper with their constants
+hoisted out of it; see [`src/zoo/models2d.jl`](src/zoo/models2d.jl).
+
+### Rendering a 2D model
+
+Three ways to say where the model is evaluated, in order of how much you have to
+type:
+
+```julia
+# 1. an image — no coordinates at all. The grid is the array's own index space,
+#    so the model's parameters are in pixels.
+img = render(scene, image)          # same size as `image`; its values are ignored
+render!(out, scene)                 # `out` is the image: grid and destination
+
+# 2. grid form — one axis per dimension, shaped to broadcast. Physical units,
+#    and the coordinates do not scale with the picture.
+x = collect(range(-8, 8; length = 100))
+y = reshape(x, 1, :)                # a column against a row — zero-copy
+img = render(scene, x, y)           # 100×100
+
+# 3. flat point list — every coordinate array co-shaped with the output, for
+#    scattered points or a meshgrid you already have.
+img = render(scene, X, Y)
+```
+
+Form 1 is form 2 with the axes filled in for you, so they cost the same. Both hand
+a 2D kernel a real image rather than the diagonal two plain vectors would produce,
+and both allocate only the output — `render!` allocates nothing.
+
+The one place the two differ is what a matrix means to a kernel. A model that
+contains one reads a lone matrix as *intensities*, not as a grid template — that
+is the kernel contract, and it is why `render(psf, image)` convolves instead of
+re-gridding. See [ADR-0006](docs/adr/0006-grid-form-coordinates.md).
 
 ---
 
