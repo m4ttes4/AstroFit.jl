@@ -43,7 +43,7 @@ Pkg.add(url="https://github.com/m4ttes4/AstroFit.jl")
 - [Motivation](#motivation)
 - [Quick Start](#quick-start)
 - [Building Models](#building-models)
-- [Kernels and PSF Convolution](#kernels-and-psf-convolution)
+- [Kernels (e.g. PSF Convolution)](#kernels-eg-psf-convolution)
 - [Adding Constraints](#adding-constraints)
 - [Working With Parameters](#working-with-parameters)
 - [Fitting](#fitting)
@@ -344,29 +344,34 @@ show their master:
 
 ```
 julia> spec   # after @constrain
-CompiledModel  ·  3 free  ·  2 bounds  ·  2 fixed  ·  1 tied
+CompiledModel  3 free  2 bounds  2 fixed  1 tied
 formula: bg + line_a + line_b
 +
 ├─ bg :: Linear1D
-│  ├─ slope      0.01    free
-│  └─ intercept  1.0     free
+│  ├─ slope      0.01      free
+│  └─ intercept  1.0       free
 ├─ line_a :: Gaussian1D
-│  ├─ amplitude  6.0     bounds [0.0, Inf]
-│  ├─ mean       4861.0  fixed
-│  └─ sigma      1.5     free
+│  ├─ amplitude  6.0       bounds [0.0, Inf]
+│  ├─ mean       4861.0    fixed
+│  └─ sigma      1.5       free
 └─ line_b :: Gaussian1D
-   ├─ amplitude  2.0     bounds [0.0, Inf]
-   ├─ mean       4959.0  fixed
-   └─ sigma      1.5     tied -> line_a.sigma
+   ├─ amplitude  2.0       bounds [0.0, Inf]
+   ├─ mean       4959.0    fixed
+   └─ sigma      1.5       tied -> line_a.sigma
 ```
 
 > [!NOTE]
 > A `@constrain` block states the model's **full** constraint set: every
-> parameter not mentioned is reset to `Free` first, so re-running an edited
-> block (e.g. in the REPL) never leaves a stale constraint behind. Priors are
-> exempt from the reset — they persist across blocks until overwritten.
-> Constraining the same parameter twice in one block is a compile-time error,
-> no silent overwrites.
+> parameter not mentioned is reset to its default first, so re-running an edited
+> block (e.g. in the REPL) never leaves a stale constraint behind. The default is
+> `Free` for ordinary models and `Fixed` for [kernel](#kernels-eg-psf-convolution)
+> fields, which are calibration inputs — so a `psf.sigma` you released with
+> `@free` is fixed again (at its current value) by the next `@constrain` block;
+> re-state the `@free` inside the block to keep it fitted. Priors are exempt from
+> the reset — they persist across blocks until overwritten.
+> Constraining the same parameter twice in one block is a compile-time error, no
+> silent overwrites. Priors are the exception: two `~` lines on the same
+> parameter are allowed and the last one wins.
 
 ### Tie expressions
 
@@ -899,59 +904,96 @@ the full script.
 ### Redshifted galaxy spectrum flagship fit (1D)
 
 This is the kind of fit I built AstroFit for. The spectrum is a synthetic AGN
-host-galaxy covering the Balmer Break/Halpha window, the region where you typically
-have the most going on at once: a curved continuum, narrow
-Balmer emission from the host (Hα, Hβ), broad Balmer components from the AGN, forbidden-line doublets ([OIII] 4959/5007, [NII] 6548/6583, [SII] 6716/6731), a Balmer breack, Na D absorption, and a redshift that moves everything to the observer frame.
+host-galaxy covering the Balmer break/Hα window, the region where you typically
+have the most going on at once: a stellar power law with a Balmer break, an AGN
+power law, a multiplicative dust screen, Ca II K/H stellar absorption, narrow
+Balmer emission from the host (Hδ, Hγ, Hβ, Hα), broad Balmer components from the
+AGN, forbidden-line doublets ([OIII] 4959/5007, [NII] 6548/6583, [SII]
+6716/6731), He II and He I, Na D absorption, and a redshift that moves everything
+to the observer frame.
 
 The model has 67 raw parameters, but most of them aren't independent. Doublet
-ratios like [OIII] and [NII] are set by atomic physics, Hβ is tied to Hα through
-the Balmer decrement, all narrow lines share one velocity width, broad lines
-share another, and rest wavelengths don't move. Once you write those constraints
-down, only 23 parameters are actually free
+ratios like [OIII] and [NII] are set by atomic physics, Hβ and the higher Balmer
+lines are tied to Hα through the Balmer decrement, all narrow lines share one
+velocity width, broad lines share another, and rest wavelengths don't move. Once
+you write those constraints down, only 23 parameters are actually free.
+
+`RedshiftAxis1D`, `DustScreen1D`, and `BalmerBreak1D` are custom components
+defined in the example script itself (see [Extending AstroFit](#extending-astrofit)),
+not built-ins:
 
 ```julia
 cm = @model begin
-    cont = Linear1D(slope = cont_slope, intercept = cont_intercept)
     stellar = PowerLaw1D(norm = pl_norm, x_ref = L_REF, index = pl_index)
+    bbreak  = BalmerBreak1D(jump = break_jump, width = 15.0, lambda_break = L_BREAK)
+    agn     = PowerLaw1D(norm = agn_norm, x_ref = L_REF, index = agn_index)
+    dust    = DustScreen1D(a_v = dust_av, lambda_ref = L_REF, slope = dust_slope)
 
-    hbeta = Gaussian1D(amplitude = ha_amplitude / 2.86, mean = L_HB, sigma = narrow_sigma)
+    cak    = Gaussian1D(amplitude = cak_amplitude, mean = L_CAK, sigma = ca_sigma)
+    cah    = Gaussian1D(amplitude = cah_amplitude, mean = L_CAH, sigma = ca_sigma)
+    hdelta = Gaussian1D(amplitude = 0.256 * ha_amplitude / 2.86, mean = L_HD, sigma = narrow_sigma)
+    hgamma = Gaussian1D(amplitude = 0.466 * ha_amplitude / 2.86, mean = L_HG, sigma = narrow_sigma)
+
+    hbeta       = Gaussian1D(amplitude = ha_amplitude / 2.86, mean = L_HB, sigma = narrow_sigma)
     broad_hbeta = Gaussian1D(amplitude = broad_ha_amplitude / 3.1, mean = L_HB, sigma = broad_sigma)
-    oiii_b = Gaussian1D(amplitude = oiii_blue_amplitude, mean = L_OIII_B, sigma = narrow_sigma)
-    oiii_r = Gaussian1D(amplitude = 2.98 * oiii_blue_amplitude, mean = L_OIII_R, sigma = narrow_sigma)
+    heii        = Gaussian1D(amplitude = heii_amplitude, mean = L_HEII, sigma = narrow_sigma)
+    oiii_b      = Gaussian1D(amplitude = oiii_blue_amplitude, mean = L_OIII_B, sigma = narrow_sigma)
+    oiii_r      = Gaussian1D(amplitude = 2.98 * oiii_blue_amplitude, mean = L_OIII_R, sigma = narrow_sigma)
 
-    ha = Gaussian1D(amplitude = ha_amplitude, mean = L_HA, sigma = narrow_sigma)
+    hei      = Gaussian1D(amplitude = hei_amplitude, mean = L_HEI, sigma = narrow_sigma)
+    ha       = Gaussian1D(amplitude = ha_amplitude, mean = L_HA, sigma = narrow_sigma)
     broad_ha = Gaussian1D(amplitude = broad_ha_amplitude, mean = L_HA, sigma = broad_sigma)
-    nii_b = Gaussian1D(amplitude = nii_blue_amplitude, mean = L_NII_B, sigma = narrow_sigma)
-    nii_r = Gaussian1D(amplitude = 3.06 * nii_blue_amplitude, mean = L_NII_R, sigma = narrow_sigma)
-    sii_b = Gaussian1D(amplitude = sii_blue_amplitude, mean = L_SII_B, sigma = narrow_sigma)
-    sii_r = Gaussian1D(amplitude = sii_red_amplitude, mean = L_SII_R, sigma = narrow_sigma)
+    nii_b    = Gaussian1D(amplitude = nii_blue_amplitude, mean = L_NII_B, sigma = narrow_sigma)
+    nii_r    = Gaussian1D(amplitude = 3.06 * nii_blue_amplitude, mean = L_NII_R, sigma = narrow_sigma)
+    sii_b    = Gaussian1D(amplitude = sii_blue_amplitude, mean = L_SII_B, sigma = narrow_sigma)
+    sii_r    = Gaussian1D(amplitude = sii_red_amplitude, mean = L_SII_R, sigma = narrow_sigma)
 
     nad_d2 = Gaussian1D(amplitude = nad_d2_amplitude, mean = L_NAD_D2, sigma = nad_sigma)
     nad_d1 = Gaussian1D(amplitude = 0.65 * nad_d2_amplitude, mean = L_NAD_D1, sigma = nad_sigma)
 
     redshift = RedshiftAxis1D(z = z)
-    flux_scale = RedshiftFluxScale1D(z = z)
 
-    ((cont + stellar + hbeta + broad_hbeta + oiii_b + oiii_r + ha +
-      broad_ha + nii_b + nii_r + sii_b + sii_r + nad_d2 + nad_d1) ∘ redshift) * flux_scale
+    (
+        dust * (
+            bbreak * stellar + agn + cak + cah + hdelta + hgamma +
+                hbeta + broad_hbeta + heii + oiii_b + oiii_r + hei + ha +
+                broad_ha + nii_b + nii_r + sii_b + sii_r + nad_d2 + nad_d1
+        )
+    ) ∘ redshift
 end
 
 @constrain cm begin
-    stellar.x_ref
+    stellar.x_ref                                   # fixed: reference wavelength
+    bbreak.width
+    bbreak.lambda_break
+    agn.x_ref
+    dust.lambda_ref
+
+    cah.sigma -> cak.sigma                          # same stellar absorption width
+    hdelta.amplitude -> 0.256 * ha.amplitude / 2.86 # Balmer decrement
+    hdelta.sigma -> ha.sigma
+    hgamma.amplitude -> 0.466 * ha.amplitude / 2.86
+    hgamma.sigma -> ha.sigma
     hbeta.amplitude -> ha.amplitude / 2.86
-    hbeta.mean
     hbeta.sigma -> ha.sigma
     broad_hbeta.amplitude -> broad_ha.amplitude / 3.1
-    broad_hbeta.mean
     broad_hbeta.sigma -> broad_ha.sigma
-    oiii_r.amplitude -> 2.98 * oiii_b.amplitude
+
+    heii.sigma -> ha.sigma                          # one narrow velocity width
+    hei.sigma -> ha.sigma
+    oiii_b.sigma -> ha.sigma
+    oiii_r.amplitude -> 2.98 * oiii_b.amplitude     # atomic doublet ratios
     oiii_r.sigma -> ha.sigma
+    nii_b.sigma -> ha.sigma
     nii_r.amplitude -> 3.06 * nii_b.amplitude
     nii_r.sigma -> ha.sigma
+    sii_b.sigma -> ha.sigma
+    sii_r.sigma -> ha.sigma
     nad_d1.amplitude -> 0.65 * nad_d2.amplitude
     nad_d1.sigma -> nad_d2.sigma
-    flux_scale.z -> redshift.z
-    # ... bounds on continuum, narrow/broad line amplitudes, widths, and redshift
+
+    # ... every rest wavelength fixed, plus bounds on the continuum,
+    #     narrow/broad line amplitudes, widths, and the redshift
 end
 ```
 
