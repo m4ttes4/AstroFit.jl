@@ -1,173 +1,303 @@
-# Fit an absorbed AGN X-ray spectrum — Galactic + intrinsic photoelectric
-# absorption on a power-law continuum plus a Fe Kα line — to synthetic
-# photon-counting data, using a custom Poisson statistic. Mirrors the
-# classic XSPEC combination `phabs * zphabs * powerlaw` used for obscured
-# (type 2) AGN.
+# Fit a toy, response-folded AGN X-ray spectrum with an XSPEC-like model.
 #
-# Run with:  julia --project=. examples/agn_xray_fit.jl
+# The model is the usual obscured type-2 AGN construction:
+#
+#     phabs * (zpcfabs * zcutoffpl + Fe Kα + Fe Kβ)
+#
+# XSPEC definitions:
+# - phabs/zphabs: https://heasarc.gsfc.nasa.gov/docs/software/xspec/manual/XSmodelPhabs.html
+# - zpcfabs: https://heasarc.gsfc.nasa.gov/docs/software/xspec/manual/XSmodelPcfabs.html
+# - zcutoffpl: https://heasarc.gsfc.nasa.gov/docs/software/xspec/manual/XSmodelCutoffpl.html
+# - zgauss: https://heasarc.gsfc.nasa.gov/docs/software/xspec/manual/node182.html
+# - fit statistics: https://heasarc.gsfc.nasa.gov/docs/software/xspec/manual/XSappendixStatistics.html
+#
+# The important distinction in this example is that the model tree renders a
+# photon spectrum (photons keV^-1 cm^-2 s^-1). Counts are produced only after
+# folding that spectrum through a toy effective area, exposure time, and RMF.
+# The response is deliberately small and analytic, not a substitute for a
+# calibrated instrument response or a real pexmon/atable model.
+#
+# Run with: julia --project=examples examples/other/agn_xray_fit.jl
 
 using AstroFit
 using Optimization, OptimizationOptimJL, ForwardDiff
-using Distributions: Poisson, logpdf
+using Distributions: Poisson
+using LinearAlgebra
 using CairoMakie
 using Random
 
 # ---------------------------------------------------------------------------
-# 0. Photoelectric absorption — a user-defined AbstractModel, no changes to
-#    AstroFit itself needed (only a @kwdef struct + scalar `render`, exactly
-#    how zoo models are written). Simplified E^-3 cross-section — real XSPEC
-#    `phabs` uses tabulated Wisconsin/Verner cross-sections; this toy form
-#    reproduces the qualitative turnover shape, not the precise edges.
-#    `z` shifts the absorber into its own rest frame: z=0 is plain `phabs`
-#    (Galactic, foreground); z>0 is `zphabs` (intrinsic, at the AGN itself).
+# 0. XSPEC-like model components
 # ---------------------------------------------------------------------------
-Base.@kwdef struct PhAbs1D{T <: Real} <: AbstractModel
-    nH::T = 1.0     # column density, units of 1e22 cm^-2
-    z::T = 0.0      # redshift of the absorbing material
-    e0::T = 1.0     # keV, cross-section reference energy
+#
+# XSPEC defines phabs as (see the phabs/zphabs reference above)
+#
+#     M(E) = exp[-N_H sigma(E)]
+#
+# and zphabs as
+#
+#     M(E) = exp[-N_H sigma(E (1 + z))].
+#
+# Here nH is N_H in units of 10^22 cm^-2. XSPEC's sigma(E) is a tabulated,
+# abundance-dependent cross-section selected by xsect/abund; it is not one
+# universal closed-form E^-3 law. We keep the example dependency-free and use
+# a smooth, correctly-scaled approximation with sigma(1 keV) ≈ 3e-22 cm^2/H.
+# It gets the broad turnover right, but intentionally does not claim to reproduce
+# the detailed absorption edges of real phabs/tbabs.
+const NH_UNIT = 1.0e22       # cm^-2
+const SIGMA_1KEV = 3.0e-22   # cm^2 per H atom; smooth educational approximation
+
+photoelectric_cross_section(E) = SIGMA_1KEV * (E / 1.0)^(-3)
+
+Base.@kwdef struct PhAbs1D{N <: Real, Z <: Real} <: AbstractModel
+    nH::N = 1.0              # equivalent hydrogen column, 10^22 cm^-2
+    z::Z = 0.0               # absorber redshift
 end
 
-# Qualified as AstroFit.render (not bare render): `using AstroFit` brings the
-# name into scope for calling, but a bare `render(...) = ...` here would define
-# a new Main.render shadowing it, invisible to the Sum/Product dispatch chain.
-AstroFit.render(m::PhAbs1D, E::Number) = exp(-m.nH * ((E * (1 + m.z)) / m.e0)^(-3))
+AstroFit.render(m::PhAbs1D, E::Number) = begin
+    E_rest = E * (1 + m.z)
+    exp(-m.nH * NH_UNIT * photoelectric_cross_section(E_rest))
+end
+
+# XSPEC zcutoffpl is a photon spectrum, not a count spectrum (see the official
+# zcutoffpl definition above):
+#
+#     A(E) = K [E (1 + z) / 1 keV]^(-alpha) exp[-E(1+z)/Ecut].
+#
+# K is the photon flux density at 1 keV in the source-frame convention used by
+# this example (photons keV^-1 cm^-2 s^-1).
+Base.@kwdef struct ZCutoffPowerLaw1D{N <: Real, I <: Real, C <: Real, Z <: Real} <: AbstractModel
+    norm::N = 1.0
+    index::I = 1.0           # photon index Gamma
+    cutoff::C = 80.0         # source-frame e-folding energy, keV
+    z::Z = 0.0
+end
+
+AstroFit.render(m::ZCutoffPowerLaw1D, E::Number) = begin
+    E_rest = E * (1 + m.z)
+    m.norm * E_rest^(-m.index) * exp(-E_rest / m.cutoff)
+end
+
+# Partial covering, following XSPEC zpcfabs:
+# M(E) = (1-f) + f exp[-N_H sigma(E(1+z))].
+Base.@kwdef struct ZPartialCovering1D{N <: Real, F <: Real, Z <: Real} <: AbstractModel
+    nH::N = 1.0
+    covering::F = 0.9
+    z::Z = 0.0
+end
+
+AstroFit.render(m::ZPartialCovering1D, E::Number) = begin
+    E_rest = E * (1 + m.z)
+    transmission = exp(-m.nH * NH_UNIT * photoelectric_cross_section(E_rest))
+    (1 - m.covering) + m.covering * transmission
+end
+
+# XSPEC zgauss (with the positive-energy truncation omitted here because the Fe
+# line
+# is many sigma above E=0 here. `norm` is the integrated observed line flux
+# (photons cm^-2 s^-1), and sigma is in the source frame. We use the physically
+# normalized observed-energy profile here, so its integral is `norm`:
+#
+#     A(E) ≈ K (1+z) / [sigma sqrt(2pi)]
+#            exp[-(E(1+z) - E_l)^2 / (2 sigma^2)].
+Base.@kwdef struct ZGaussianLine1D{K <: Real, E <: Real, S <: Real, Z <: Real} <: AbstractModel
+    norm::K = 1.0e-5        # observed integrated photons cm^-2 s^-1
+    line_energy::E = 6.4    # source-frame keV
+    sigma::S = 0.1          # source-frame keV
+    z::Z = 0.0
+end
+
+AstroFit.render(m::ZGaussianLine1D, E::Number) = begin
+    u = (E * (1 + m.z) - m.line_energy) / m.sigma
+    m.norm * (1 + m.z) / (m.sigma * sqrt(2pi)) * exp(-u^2 / 2)
+end
 
 # ---------------------------------------------------------------------------
-# 1. True model — phabs (Galactic) * zphabs (intrinsic) * (powerlaw + Fe Kα)
+# 1. Toy detector response and deterministic grouping
 # ---------------------------------------------------------------------------
-# Energy in keV, model output = expected photon counts per bin.
-z_src = 0.05                        # source redshift, known from optical spectroscopy
-fe_energy_obs = 6.4 / (1 + z_src)   # rest-frame 6.4 keV, redshifted into the observed frame
+#
+# A real XSPEC fit evaluates the photon model through an ARF (effective area)
+# and RMF (energy redistribution). The RMF below is a Gaussian energy response;
+# it is enough to make the line visibly instrument-broadened without a FITS
+# response dependency.
+const EXPOSURE = 50_000.0   # s
+
+effective_area(E) = begin
+    low_energy_cutoff = 1 - exp(-(E / 0.45)^4)
+    50.0 + 900.0 * low_energy_cutoff * exp(-0.045E)
+end
+
+native_edges = collect(range(0.3, 30.0; step = 0.05))
+native_centers = (native_edges[1:end-1] .+ native_edges[2:end]) ./ 2
+native_widths = diff(native_edges)
+
+function toy_rmf(energies)
+    response = zeros(length(energies), length(energies))
+    for j in eachindex(energies)
+        fwhm = 0.08 + 0.015 * sqrt(energies[j])
+        sigma = fwhm / 2.355
+        weights = exp.(-0.5 .* ((energies .- energies[j]) ./ sigma) .^ 2)
+        response[:, j] .= weights ./ sum(weights)
+    end
+    return response
+end
+
+const RMF = toy_rmf(native_centers)
+
+# Grouping sums adjacent detector channels. A sum of independent Poisson
+# counts is still Poisson, so grouping does NOT by itself turn the likelihood
+# into a Gaussian one. The expected counts must be summed over the same native
+# channels; evaluating the model only at the grouped midpoint is not equivalent
+# around a sharp absorption turnover or line.
+group_size = 4
+groups = [
+    first:min(first + group_size - 1, length(native_centers)) for
+    first in 1:group_size:length(native_centers)
+]
+group_centers = [
+    (native_edges[first(g)] + native_edges[last(g) + 1]) / 2 for g in groups
+]
+
+function folded_group_counts(model)
+    # photons keV^-1 cm^-2 s^-1 × cm^2 × s × keV = expected incident counts
+    incident = render(model, native_centers) .* effective_area.(native_centers) .* EXPOSURE .* native_widths
+    detected = RMF * incident
+    return [sum(@view detected[g]) for g in groups]
+end
+
+# ---------------------------------------------------------------------------
+# 2. True model and synthetic grouped counts
+# ---------------------------------------------------------------------------
+z_src = 0.05
 
 true_model = @model begin
-    gal = PhAbs1D(nH = 0.02, z = 0.0)          # Galactic foreground, thin
-    intrinsic = PhAbs1D(nH = 5.0, z = z_src)   # obscured AGN (Seyfert 2-like)
-    cont = PowerLaw1D(norm = 8.0, x_ref = 1.0, index = 1.8)   # Γ=1.8
-    fe_line = Gaussian1D(amplitude = 3.0, mean = fe_energy_obs, sigma = 0.15)
-    gal * intrinsic * (cont + fe_line)
+    gal = PhAbs1D(nH = 0.02, z = 0.0)                  # phabs
+    partial = ZPartialCovering1D(nH = 1.5, covering = 0.92, z = z_src)
+    direct = ZCutoffPowerLaw1D(norm = 4.0e-3, index = 1.8, cutoff = 80.0, z = z_src)
+    fe_kalpha = ZGaussianLine1D(norm = 1.5e-5, line_energy = 6.4, sigma = 0.08, z = z_src)
+    fe_kbeta = ZGaussianLine1D(norm = 0.113 * 1.5e-5, line_energy = 7.06, sigma = 0.08, z = z_src)
+    gal * (partial * direct + fe_kalpha + fe_kbeta)
 end
 
-# ---------------------------------------------------------------------------
-# 2. Synthetic data — Poisson counts, not Gaussian noise
-# ---------------------------------------------------------------------------
+background_native = 0.12 .+ 0.01 .* (native_centers ./ 10) .^ 2
+background = [sum(@view background_native[g]) for g in groups]
+λ_true = folded_group_counts(true_model) .+ background
 Random.seed!(7)
-E = collect(0.3:0.05:10.0)
-λ_true = render(true_model, E)
-counts = [rand(Poisson(λ)) for λ in λ_true]
+grouped_counts = [rand(Poisson(λ)) for λ in λ_true]
 
 # ---------------------------------------------------------------------------
-# 3. Fitting model — off initial guess. Galactic nH/z and the reference
-#    energies are known independently (HI maps, optical redshift) and stay
-#    fixed; the intrinsic column density is the actual fit target.
+# 3. Fitting model — same physics, intentionally displaced initial values
 # ---------------------------------------------------------------------------
 cm = @model begin
     gal = PhAbs1D(nH = 0.02, z = 0.0)
-    intrinsic = PhAbs1D(nH = 2.0, z = z_src)
-    cont = PowerLaw1D(norm = 4.0, x_ref = 1.0, index = 1.5)
-    fe_line = Gaussian1D(amplitude = 1.0, mean = 5.8, sigma = 0.3)
-    gal * intrinsic * (cont + fe_line)
+    partial = ZPartialCovering1D(nH = 0.8, covering = 0.75, z = z_src)
+    direct = ZCutoffPowerLaw1D(norm = 2.0e-3, index = 1.5, cutoff = 50.0, z = z_src)
+    fe_kalpha = ZGaussianLine1D(norm = 5.0e-6, line_energy = 6.4, sigma = 0.18, z = z_src)
+    fe_kbeta = ZGaussianLine1D(norm = 0.113 * 5.0e-6, line_energy = 7.06, sigma = 0.18, z = z_src)
+    gal * (partial * direct + fe_kalpha + fe_kbeta)
 end
 
 @fix cm.gal.nH = 0.02
 @fix cm.gal.z = 0.0
-@fix cm.gal.e0 = 1.0
-@fix cm.intrinsic.z = z_src
-@fix cm.intrinsic.e0 = 1.0
-@fix cm.cont.x_ref = 1.0
-@bound cm.intrinsic.nH in (0.01, 50)
-@bound cm.cont.norm in (0.01, 50)
-@bound cm.cont.index in (0.1, 5)
-@bound cm.fe_line.amplitude in (0.01, 20)
-@bound cm.fe_line.mean in (5.5, 6.5)
-@bound cm.fe_line.sigma in (0.02, 1.0)
+@fix cm.partial.z = z_src
+@fix cm.direct.z = z_src
+@fix cm.direct.cutoff = 80.0
+@fix cm.fe_kalpha.line_energy = 6.4
+@fix cm.fe_kalpha.z = z_src
+@fix cm.fe_kbeta.line_energy = 7.06
+@fix cm.fe_kbeta.z = z_src
+@fix cm.fe_kbeta.sigma = 0.08
+
+@tie cm.fe_kbeta.norm -> 0.113 * cm.fe_kalpha.norm
+
+@bound cm.partial.nH in (0.01, 20.0)
+@bound cm.partial.covering in (0.01, 1.0)
+@bound cm.direct.norm in (1.0e-5, 0.1)
+@bound cm.direct.index in (0.5, 3.5)
+@bound cm.fe_kalpha.norm in (1.0e-8, 1.0e-3)
+@fix cm.fe_kalpha.sigma = 0.08
 
 # ---------------------------------------------------------------------------
-# 4. Poisson log-likelihood as a custom `statistic`, then fit
+# 4. Cash/C statistic on grouped Poisson counts
 # ---------------------------------------------------------------------------
-# logpdf(Poisson(λ), 0) is correctly 0 at λ→0, but its ForwardDiff derivative
-# is NaN there (the k*log(λ) chain rule still evaluates log(λ)=-Inf before
-# the k=0 factor zeroes it out). At k=0 the exact log-likelihood collapses to
-# -λ anyway (log and loggamma(1) terms both vanish), so branch around it —
-# this is a numerically-safe rewrite of the same formula, not a domain guard.
-# This IS the XSPEC "cstat"/Cash (1979) statistic: fit directly on
-# unrebinned counts, no minimum-counts-per-bin grouping needed, unlike the
-# chi²-on-grouped-data alternative XSPEC also offers.
-poisson_ll_term(λ, k) = k == 0 ? -λ : logpdf(Poisson(λ), k)
+#
+# XSPEC's cstat is twice the negative Poisson log-likelihood, up to terms that
+# depend only on the observed data:
+#
+#     C = 2 sum [ mu - n + n log(n / mu) ],
+#
+# with the n=0 contribution defined as 2mu. The grouped data above are still
+# integer counts. The model expectations mu are floats, as they should be.
+# Here `background` is a known detector background, so this is the pstat-like
+# case: the observed source-region counts are Poisson with mean source + bg.
+# A measured background spectrum with its own uncertainty needs a joint/profile
+# likelihood (XSPEC W/pgstat), which is deliberately not added to this example.
+cash_term(mu, n) = n == 0 ? 2mu : 2 * (mu - n + n * (log(n) - log(mu)))
 
-# Same two-method shape as AstroFit's own `chi2(model, coords, y, err)` /
-# `chi2(f::ObjectiveFunction, p)` (src/fit/loss.jl) — keeps the tree-walk
-# out of the per-point term and makes the statistic reusable outside fitting
-# (e.g. to score `λ_true` below without touching `ObjectiveFunction`).
-poisson_loglike(model, coords, y) = begin
-    Es = coords[1]
-    sum(i -> poisson_ll_term(render(model, Es[i]), y[i]), eachindex(y))
+cash_statistic(model, y) = begin
+    mu = folded_group_counts(model) .+ background
+    sum(i -> cash_term(mu[i], y[i]), eachindex(y))
 end
-poisson_loglike(f::ObjectiveFunction, p) = poisson_loglike(withparams(f.cm, p), f.coords, f.y)
 
-# Optimization.jl minimizes — negate the log-likelihood to fit.
-prob = OptimizationProblem(cm, E, counts; statistic = (f, p) -> -poisson_loglike(f, p))
+cash_statistic(f::ObjectiveFunction, p) = cash_statistic(withparams(f.cm, p), f.y)
+
+# Optimization.jl minimizes, so the statistic is already the quantity to pass
+# directly: C is not a log-likelihood with a sign that needs another negation.
+initial_cstat = cash_statistic(cm, grouped_counts)
+@assert isfinite(initial_cstat)
+prob = OptimizationProblem(cm, group_centers, grouped_counts; statistic = cash_statistic)
 sol = solve(prob, LBFGS())
-
 fit_tree = withparams(cm, sol.u)
+fit_cstat = cash_statistic(fit_tree, grouped_counts)
+@assert fit_cstat < initial_cstat "optimizer did not improve the initial C-stat"
 
 println("retcode         : ", sol.retcode)
 println("free parameters : ", nfree(cm))
 println("parameter names : ", paramnames(cm))
-println("best fit values : ", round.(sol.u; digits = 4))
+println("best fit values : ", round.(sol.u; digits = 6))
+println("C-stat initial  : ", round(initial_cstat; digits = 3))
+println("C-stat at fit   : ", round(fit_cstat; digits = 3))
+println("grouped bins    : ", length(grouped_counts), " (", group_size, " native channels/group)")
 println()
 
 # ---------------------------------------------------------------------------
-# 5. Plot: initial guess vs best fit vs data
+# 5. Plot folded counts, not the un-folded photon spectrum
 # ---------------------------------------------------------------------------
-# √N is undefined/misleading at N=0 (and biased for small N in general), so
-# use the Gehrels (1986) approximate 1σ Poisson confidence limits instead —
-# the standard asymmetric error astronomers quote on low-count spectra, and
-# well-defined at N=0 (upper limit only, lower error clamps to 0).
+# Gehrels intervals are only display intervals. They are not supplied to the
+# C-stat objective, which uses the exact Poisson likelihood for the counts.
 gehrels_upper(n) = n + 1 + sqrt(n + 0.75)
 gehrels_lower(n) = n == 0 ? 0.0 : n * (1 - 1 / (9n) - 1 / (3 * sqrt(n)))^3
-err_hi = [gehrels_upper(n) - n for n in counts]
-err_lo = [n - gehrels_lower(n) for n in counts]
+err_hi = [gehrels_upper(n) - n for n in grouped_counts]
+err_lo = [n - gehrels_lower(n) for n in grouped_counts]
 
-λ_init = render(cm, E)
-λ_fit = render(fit_tree, E)
+lambda_init = folded_group_counts(cm) .+ background
+lambda_fit = folded_group_counts(fit_tree) .+ background
 
-# log-log, as XSPEC always plots folded spectra — linear axes hide the
-# absorption turnover (E^-3 cross-section spans orders of magnitude below
-# ~1 keV) and the Fe Kα bump under the continuum peak. log(0) is undefined,
-# so: model curves get a floor matched to the axis's own lower limit (the
-# fit itself never sees this — `counts`, `sol`, `fit_tree` are all
-# untouched), and zero-count bins are dropped from the data points (nothing
-# physically wrong with them, see poisson_ll_term — they just can't sit on a
-# log y-axis). A floor many decades below the plotted range (e.g. 1e-6)
-# would draw a flat shelf across most of the panel instead of letting the
-# curve run off the bottom edge like a real folded-spectrum plot.
-floor_for_log = 1e-2
-λ_true_plot = max.(λ_true, floor_for_log)
-λ_init_plot = max.(λ_init, floor_for_log)
-λ_fit_plot = max.(λ_fit, floor_for_log)
-detected = counts .> 0
+floor_for_log = 0.5
+detected = grouped_counts .> 0
 
 fig = Figure(size = (900, 500))
 ax = Axis(
-    fig[1, 1]; xlabel = "Energy (keV)", ylabel = "Counts",
-    xscale = log10, yscale = log10, limits = (nothing, nothing, floor_for_log, nothing),
-    title = "Absorbed AGN Fit: phabs × zphabs × (powerlaw + Fe Kα), Poisson statistic"
+    fig[1, 1]; xlabel = "Observed energy (keV)", ylabel = "Counts / grouped channel",
+    xscale = log10, yscale = log10,
+    limits = (nothing, nothing, floor_for_log, nothing),
+    title = "partial-covering AGN + cutoff + Fe K complex, grouped C-stat fit"
 )
 
 errorbars!(
-    ax, E[detected], counts[detected], err_lo[detected], err_hi[detected];
-    color = :grey60, whiskerwidth = 3
+    ax, group_centers[detected], grouped_counts[detected],
+    err_lo[detected], err_hi[detected]; color = :grey60, whiskerwidth = 3
 )
 scatter!(
-    ax, E[detected], counts[detected]; color = :grey60, markersize = 4,
-    label = "data (counts, Gehrels 1σ)"
+    ax, group_centers[detected], grouped_counts[detected]; color = :grey60,
+    markersize = 4, label = "data (source + known background, Gehrels 1σ)"
 )
-lines!(ax, E, λ_true_plot; color = :black, linestyle = :dash, label = "truth")
-lines!(ax, E, λ_init_plot; color = :dodgerblue, linestyle = :dot, label = "initial guess")
-lines!(ax, E, λ_fit_plot; color = :red, linewidth = 2, label = "best fit")
+lines!(ax, group_centers, max.(λ_true, floor_for_log); color = :black, linestyle = :dash, label = "truth")
+lines!(ax, group_centers, max.(lambda_init, floor_for_log); color = :dodgerblue, linestyle = :dot, label = "initial guess")
+lines!(ax, group_centers, max.(lambda_fit, floor_for_log); color = :red, linewidth = 2, label = "best fit")
 
 axislegend(ax; position = :lb)
 
 display(fig)
-# save("examples/agn_xray_fit.png", fig; px_per_unit = 2)
-# println("saved → examples/agn_xray_fit.png")
+save("examples/other/agn_xray_fit.png", fig; px_per_unit = 2)
+println("saved → examples/other/agn_xray_fit.png")
