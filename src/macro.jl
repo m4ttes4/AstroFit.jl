@@ -9,11 +9,14 @@ using MacroTools: @capture, postwalk
 
 Build a [`CompiledModel`](@ref) from named leaf models and a composition expression.
 
-Each `name = expr` line creates a [`Leaf`](@ref) with all-[`Free`](@ref) constraints.
-The final expression (e.g. `name₁ + name₂`) defines how leaves combine; compound
-operators (`+`, `*`, `|`) build the tree. Constraints are set afterwards via
-[`@constrain`](@ref) or the standalone macros ([`@fix`](@ref), [`@bound`](@ref),
-[`@tie`](@ref), [`@free`](@ref), [`@prior`](@ref)).
+Each `name = model` line creates a [`Leaf`](@ref) with all-[`Free`](@ref)
+constraints. When the value is a prefab [`CompiledModel`](@ref), its tree is
+spliced in and its Component names are prefixed with `name_`; constraints and
+priors are preserved. The final expression (e.g. `name₁ + name₂`) defines how
+leaves combine; compound operators (`+`, `*`, `|`) build the tree. Constraints
+are set afterwards via [`@constrain`](@ref) or the standalone macros
+([`@fix`](@ref), [`@bound`](@ref), [`@tie`](@ref), [`@free`](@ref),
+[`@prior`](@ref)).
 
 # Examples
 ```julia
@@ -28,7 +31,8 @@ See also: [`@constrain`](@ref), [`CompiledModel`](@ref)
 """
 macro model(blk)
     blk isa Expr && blk.head === :block || error("@model expects a begin…end block")
-    defs = Any[]
+    priors = gensym(:priors)
+    defs = Any[:(local $priors = nothing)]
     final = nothing
     for s in blk.args
         s isa LineNumberNode && continue
@@ -41,7 +45,8 @@ macro model(blk)
             # consistently in the binding and in `final`, so they don't leak into the
             # caller. Only the model expression is escaped (it may use caller variables).
             push!(defs, :(local $m = $(esc(mexpr))))
-            push!(defs, :($name = Leaf{$(QuoteNode(name))}($m, _defaults($m))))
+            push!(defs, :($name = _component(Val($(QuoteNode(name))), $m)))
+            push!(defs, :($priors = _mergepriors($priors, Val($(QuoteNode(name))), $m)))
         else
             final === nothing || error("@model: expected one composition expression, got also `$s`")
             final = s
@@ -50,8 +55,33 @@ macro model(blk)
     final === nothing && error("@model: missing composition expression")
     return quote
         $(defs...)
-        _compiled($final)
+        _compiled($final, $priors)
     end
+end
+
+_component(::Val{name}, m::AbstractModel) where {name} = Leaf{name}(m, _defaults(m))
+_component(::Val{name}, cm::CompiledModel) where {name} =
+    _prefix(getfield(cm, :tree), Val(name))
+
+function _prefix(l::Leaf{name}, prefix::Val{p}) where {name, p}
+    constraints = map(c -> _prefixconstraint(c, prefix), l.constraints)
+    return Leaf{Symbol(p, :_, name)}(l.model, constraints)
+end
+_prefix(node, prefix::Val) =
+    constructorof(typeof(node))(_prefix(node.left, prefix), _prefix(node.right, prefix))
+
+_prefixconstraint(c, ::Val) = c
+_prefixconstraint(c::Tied{paths}, ::Val{prefix}) where {paths, prefix} =
+    Tied(map(path -> (Symbol(prefix, :_, path[1]), path[2]), paths), c.f)
+
+_mergepriors(priors, ::Val, ::AbstractModel) = priors
+function _mergepriors(priors, ::Val{prefix}, cm::CompiledModel) where {prefix}
+    inner = getfield(cm, :priors)
+    inner === nothing && return priors
+    renamed = map(inner) do ((leaf, field), dist)
+        ((Symbol(prefix, :_, leaf), field), dist)
+    end
+    return priors === nothing ? renamed : (priors..., renamed...)
 end
 
 """
@@ -75,14 +105,14 @@ Wrap `tree` in a [`CompiledModel`](@ref), rejecting duplicate leaf names.
 Duplicate leaves would collide in [`withparams`](@ref); use [`Tied`](@ref) to share
 values across components instead.
 """
-function _compiled(tree)
+function _compiled(tree, priors = nothing)
     names = Symbol[]
     _leafnames!(names, tree)
     allunique(names) || error(
         "@model: leaf(s) used more than once: " *
             join(unique(n for n in names if count(==(n), names) > 1), ", ")
     )
-    return CompiledModel(tree, nothing)
+    return CompiledModel(tree, priors)
 end
 
 _leafnames!(acc, ::Leaf{name}) where {name} = (push!(acc, name); acc)

@@ -45,6 +45,29 @@ end
     @test only(priors)[2] === user
 end
 
+@testitem "priors survive Prefab composition" tags = [:bayes, :prefab] begin
+    using AstroFit
+    using Distributions
+
+    prefab = @model begin
+        line = Gaussian1D()
+        line
+    end
+    @constrain prefab begin
+        line.amplitude ~ Normal()
+        line.mean ~ Normal()
+        line.sigma ~ LogNormal()
+    end
+
+    cm = @model begin
+        halpha = prefab
+        halpha
+    end
+    objective = ObjectiveFunction(cm, [0.0], render(cm, [0.0]); statistic = logposterior)
+
+    @test isfinite(objective(AstroFit.params(cm)))
+end
+
 @testitem "priors reject fixed and tied targets" tags = [:bayes] begin
     using AstroFit
     using Distributions

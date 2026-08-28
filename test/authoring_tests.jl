@@ -16,6 +16,30 @@
     @test render(cm, 0.0) == render(cm.narrow.model, 0.0) + render(cm.broad.model, 0.0)
 end
 
+@testitem "@model composes a Prefab with prefixed parameter names" tags = [:authoring, :prefab] begin
+    using AstroFit
+
+    cm = @model begin
+        halpha = emission_line(center = 6563.0)
+        halpha
+    end
+
+    @test paramnames(cm) == [:halpha_line_amplitude, :halpha_line_mean, :halpha_line_sigma]
+end
+
+@testitem "@model composes a multi-Component Prefab" tags = [:authoring, :prefab] begin
+    using AstroFit
+
+    cm = @model begin
+        oiii = doublet(blue_center = 4959.0, red_center = 5007.0)
+        oiii
+    end
+
+    @test paramnames(cm) ==
+        [:oiii_blue_amplitude, :oiii_blue_mean, :oiii_blue_sigma]
+    @test render(withparams(cm, [2.0, 4959.0, 3.0]), 5007.0) > 0
+end
+
 @testitem "@model requires named leaves in a begin block" tags = [:authoring] begin
     using AstroFit
 
