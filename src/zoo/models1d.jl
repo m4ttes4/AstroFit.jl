@@ -62,6 +62,8 @@ end
 # The profile width `f` and the mixing `η` depend only on the parameters, so they
 # come out of the loop — this is the one 1D model where that is worth a method.
 function render!(out::AbstractArray, m::Voigt1D, xs::AbstractArray)
+    xs isa AbstractMatrix && return _copyrender!(out, _eval(m, xs))
+    _checkrendercoords(out, xs)
     fg = 2 * m.sigma * sqrt(2 * log(2))
     fl = 2 * m.gamma
     f = (

@@ -38,6 +38,7 @@ function render(m::Gaussian2D, x::Number, y::Number)
 end
 
 function render!(out::AbstractArray, m::Gaussian2D, xs::AbstractArray, ys::AbstractArray)
+    _checkrendercoords(out, xs, ys)
     cost, sint = cos(m.theta), sin(m.theta)
     inv_s2 = 1 / m.sigma^2
     inv_q2 = 1 / m.q^2
@@ -72,6 +73,7 @@ function render(m::Sersic2D, x::Number, y::Number)
 end
 
 function render!(out::AbstractArray, m::Sersic2D, xs::AbstractArray, ys::AbstractArray)
+    _checkrendercoords(out, xs, ys)
     bn = 2 * m.n - 1 / 3 + 4 / (405 * m.n)
     inv_n = 1 / m.n
     inv_r = 1 / m.r_eff
@@ -104,6 +106,7 @@ function render(m::Moffat2D, x::Number, y::Number)
 end
 
 function render!(out::AbstractArray, m::Moffat2D, xs::AbstractArray, ys::AbstractArray)
+    _checkrendercoords(out, xs, ys)
     inv_a2 = 1 / m.alpha^2
     nbeta = -m.beta
     cost, sint = cos(m.theta), sin(m.theta)
@@ -134,6 +137,7 @@ function render(m::Beta2D, x::Number, y::Number)
 end
 
 function render!(out::AbstractArray, m::Beta2D, xs::AbstractArray, ys::AbstractArray)
+    _checkrendercoords(out, xs, ys)
     inv_rc2 = 1 / m.r_core^2
     exp_val = -3 * m.beta + 0.5
     cost, sint = cos(m.theta), sin(m.theta)

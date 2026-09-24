@@ -18,7 +18,7 @@ include("zoo/recipes1d.jl")
 include("fit/loss.jl")
 include("show.jl")
 
-export AbstractModel, AbstractKernel, evalstyle
+export AbstractModel, AbstractKernel, evalstyle, Pointwise, Domainwise
 export Gaussian1D, Const1D, Linear1D, Lorentzian1D, Voigt1D
 export PowerLaw1D, BlackBody1D, BrokenPowerLaw1D, Exponential1D, Redshift1D
 export Gaussian2D, Sersic2D, Moffat2D, Beta2D

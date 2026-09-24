@@ -263,7 +263,9 @@ Two rules:
   produced upstream, not coordinates. Array index *is* the grid, so widths are
   in samples and the grid is assumed uniform — convert physical widths yourself
   when you build the kernel.
-- **Same size out as in.** How you treat the edges (clamp, zero-pad,
+- **Same axes out as in.** Framework evaluation checks each kernel's output
+  before downstream broadcasting. Direct calls to your array method must honor
+  that contract too. How you treat the edges (clamp, zero-pad,
   renormalize) is your kernel's choice; `GaussianPSF` renormalizes so a flat
   signal stays flat all the way to the borders.
 
@@ -1134,7 +1136,8 @@ automatically. But if your model has work that can be shared across points
 in-place `render!` that fills a preallocated output array:
 
 ```julia
-function AstroFit.render!(out::AbstractArray, m::Blackbody1D, λs::AbstractArray)
+function AstroFit.render!(out::AbstractVector, m::Blackbody1D, λs::AbstractVector)
+    axes(out) == axes(λs) || throw(DimensionMismatch("output and coordinate axes must match"))
     h, c, k = 6.626e-27, 2.998e10, 1.381e-16
     @inbounds for i in eachindex(out, λs)
         ν = c / (λs[i] * 1e-8)
@@ -1145,6 +1148,11 @@ end
 ```
 
 This is purely optional. Define it when profiling shows it matters.
+
+The destination must have exactly the prediction's axes and an element type that
+can hold its values. When differentiating, that may require a dual-valued buffer.
+Generic `render!` supports array-native models too, but their whole-array work
+can allocate intermediate arrays.
 
 One rule if your model takes more than one coordinate: **broadcast, do not write a
 linear `eachindex(out, xs, ys)` loop.** A linear loop demands identical axes, and
@@ -1174,14 +1182,40 @@ img = render(scene, x, y)           # 100×100
 img = render(scene, X, Y)
 ```
 
-Form 1 is form 2 with the axes filled in for you, so they cost the same. Both hand
-a 2D kernel a real image rather than the diagonal two plain vectors would produce,
-and both allocate only the output — `render!` allocates nothing.
+Form 1 is form 2 with the axes filled in for you. For pointwise models, allocating
+rendering pays only for the output and the built-in `render!` methods allocate
+nothing. Kernels may allocate working arrays in either form.
 
-The one place the two differ is what a matrix means to a kernel. A model that
-contains one reads a lone matrix as *intensities*, not as a grid template — that
-is the kernel contract, and it is why `render(psf, image)` convolves instead of
-re-gridding. See [ADR-0006](docs/adr/0006-grid-form-coordinates.md).
+A bare kernel reads a matrix as intensities. A source-to-kernel pipe first renders
+its source on the template's index grid, then passes those intensities to the
+kernel. Values produced inside a pipe never become templates: a subsequent
+`Linear1D`, for example, transforms each intensity. See
+[ADR-0007](docs/adr/0007-rendering-protocol.md).
+
+### Array-native models
+
+A model that needs whole coordinate arrays can opt into the same evaluator
+without becoming a kernel:
+
+```julia
+struct ArrayScale{T} <: AbstractModel
+    scale::T
+end
+AstroFit.evalstyle(::Type{<:ArrayScale}) = Domainwise()
+AstroFit.render(m::ArrayScale, xs::AbstractArray) = m.scale .* xs
+
+m = ArrayScale(2.0)
+render(m, [1.0, 2.0])       # [2.0, 4.0]
+render!(zeros(2), m, [1.0, 2.0])
+```
+
+Declare the style as well as the array method. It applies consistently to named
+leaves, compiled models, arithmetic, pipes, and objectives. A root call supplies
+coordinates; a pipe supplies its left child's values. Unlike a pointwise model,
+an array-native leaf reads a lone matrix as array data. Multiple coordinate
+arrays should follow the same broadcasting convention as the 2D examples above.
+Use `AbstractKernel` when the model specifically transforms one intensity array
+on its index grid; that subtype already declares `Domainwise()`.
 
 ---
 

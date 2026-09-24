@@ -2,7 +2,6 @@ _coords(x::Tuple) = x
 _coords(x) = (x,)
 
 
-# NOTE rewrite chi2 in a more idiomatic way
 """
     chi2(model, coords, y, err)
     chi2(f::ObjectiveFunction, p)
@@ -13,7 +12,7 @@ The two-argument form substitutes parameters `p` into the objective's compiled m
 before evaluating.
 
 Pointwise models take a scalar loop that never materializes the prediction;
-models containing a kernel ([`AbstractKernel`](@ref)) cannot be evaluated one
+domainwise models (including [`AbstractKernel`](@ref)) cannot be evaluated one
 point at a time, so they render once over the whole coordinate array. The split
 is by [`evalstyle`](@ref) and folds at compile time.
 
@@ -22,31 +21,28 @@ See also: [`loglikelihood`](@ref), [`ObjectiveFunction`](@ref)
 chi2(model, coords, y, err) = _chi2(evalstyle(model), model, coords, y, err)
 
 @inline _chi2(::Pointwise, model, coords, y, err) = _chi2p(model, coords, y, err)
+@inline _chi2(::Domainwise, model, coords, y, err) = _chi2array(model, coords, y, err)
 
-# Domainwise: `_eval`, not `render` — the tree materializes an array only where a
-# kernel forces one, and the compound nodes above it stay a lazy `Broadcasted`.
-# Indexing that in the residual sum means the prediction is never assembled into
-# an array of its own, so an objective call allocates the kernel's working arrays
-# and nothing else.
-function _chi2(::Domainwise, model, coords, y, ::Nothing)
+# Shared lazy reduction: only domainwise consumers force intermediate arrays.
+# Arithmetic and pointwise consumers above them remain fused with the residual.
+function _chi2array(model, coords, y, ::Nothing)
     μ = _eval(model, coords...)
     _checkpred(μ, y)
     return sum(i -> abs2(μ[i] - y[i]), eachindex(y))
 end
 
-function _chi2(::Domainwise, model, coords, y, err)
+function _chi2array(model, coords, y, err)
     μ = _eval(model, coords...)
     _checkpred(μ, y)
     return sum(i -> abs2((μ[i] - y[i]) / err[i]), eachindex(y))
 end
 
-# A kernel that is not size-preserving would otherwise silently mis-align the
-# residual (or throw far from the cause).
+# Kernel outputs are checked at their producer. This separate check ensures the
+# complete prediction (including ordinary array-native models) matches the data.
 function _checkpred(μ, y)
-    size(μ) == size(y) || throw(
+    axes(μ) == axes(y) || throw(
         DimensionMismatch(
-            "model prediction has size $(size(μ)) but data has size $(size(y)) — " *
-                "a kernel must return an array the same size as its input"
+            "model prediction axes $(axes(μ)) do not match data axes $(axes(y))"
         )
     )
     return nothing
@@ -57,15 +53,7 @@ end
 # then serves both coordinate forms — a flat list of co-shaped points, and the
 # grid form (a column `x` against a row `y`) that a kernel needs. Nothing is
 # materialized: `μ[i]` evaluates `render` at that point.
-function _chi2p(model, coords, y, ::Nothing)
-    μ = _eval(model, coords...)
-    return sum(i -> abs2(μ[i] - y[i]), eachindex(y))
-end
-
-function _chi2p(model, coords, y, err)
-    μ = _eval(model, coords...)
-    return sum(i -> abs2((μ[i] - y[i]) / err[i]), eachindex(y))
-end
+@inline _chi2p(model, coords, y, err) = _chi2array(model, coords, y, err)
 
 # 1D fast path — direct indexing, no map/splat
 function _chi2p(model, coords::Tuple{AbstractVector}, y, ::Nothing)

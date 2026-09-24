@@ -22,9 +22,11 @@ Contract:
   produced upstream, not coordinates — array index is the grid
   ([ADR-0001](docs/adr/0001-kernel-grid-contract.md)), so widths are in samples
   and the grid is assumed uniform.
-- **Size-preserving.** `size(render(k, ys)) == size(ys)`, so a rendered model can
-  be compared against data with no reshaping. Edge handling is the kernel's own
-  choice.
+- **Axes-preserving.** `axes(render(k, ys)) == axes(ys)`. Framework evaluation
+  checks this immediately after each kernel, before broadcasting can hide a
+  mismatch. A direct call to a user-defined `render(k, ys)` invokes that method
+  itself, so its author remains responsible for this contract. Edge handling is
+  the kernel's own choice.
 - **Whatever shape the upstream model produced.** A 2D kernel is handed an image,
   which means the model has to be rendered over *grid-form* coordinates: one axis
   per dimension, shaped so they broadcast — a column against a row,
