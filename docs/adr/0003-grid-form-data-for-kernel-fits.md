@@ -1,5 +1,9 @@
 # Kernel fits require grid-form data
 
+> Current clarification: co-shaped coordinate matrices and broadcast-shaped
+> axes both work. Validation checks broadcast axes, not physical neighborhood
+> structure. See [ADR-0007](0007-rendering-protocol.md).
+
 > **Superseded in part by [ADR-0006](0006-grid-form-coordinates.md).** The first
 > paragraph still holds. The reshaping mechanism in the second and third
 > paragraphs was never implemented and has been replaced: the caller shapes the

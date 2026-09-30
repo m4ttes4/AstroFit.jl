@@ -1,5 +1,11 @@
 # Grid-form coordinates belong to the caller, validated by one broadcast rule
 
+> The coordinate-layout decision still applies. The evaluator described below
+> has been consolidated further in [ADR-0007](0007-rendering-protocol.md):
+> `_arender` is removed, pipe values cannot invoke matrix-template shorthand,
+> and `render!` requires exact destination axes. Historical measurements below
+> describe the implementation at the time of this decision.
+
 A multi-dimensional model takes its coordinates in one of two forms, and both are
 accepted everywhere — `render`, `render!`, `check_data`, `chi2`:
 
