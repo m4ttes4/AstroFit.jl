@@ -208,6 +208,25 @@ end
     @test_throws ArgumentError setconstraint(cm, :line, :missing, Free())
 end
 
+@testitem "Bounded rejects empty and NaN intervals for every argument type" tags = [:core] begin
+    using AstroFit
+
+    # Same-typed arguments used to reach the default constructor and skip the checks.
+    @test_throws ArgumentError Bounded(5.0, 1.0)
+    @test_throws ArgumentError Bounded(1.0, 1.0)
+    @test_throws ArgumentError Bounded(NaN, 1.0)
+    @test_throws ArgumentError Bounded(5, 1.0)
+    @test_throws ArgumentError Bounded{Float64}(5, 1)
+    @test Bounded(0, Inf) === Bounded{Float64}(0.0, Inf)
+
+    cm = @model begin
+        g = Gaussian1D()
+        g
+    end
+    # `@bound` rebinds its variable, so give it one local to the @test_throws scope.
+    @test_throws ArgumentError (m = cm; @bound m.g.sigma in (5.0, 1.0))
+end
+
 @testitem "@constrain validation rejects bad tie masters and bad paths" tags = [:authoring] begin
     using AstroFit
 

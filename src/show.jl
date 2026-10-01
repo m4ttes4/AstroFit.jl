@@ -2,7 +2,6 @@
 # text/plain CompiledModel show draws a colored, flattened tree.
 # ponytail: colors via stdlib printstyled (honors IOContext :color); no Crayons dep.
 
-const _NODE = Union{Sum, Difference, Product, Quotient, Pipe}
 const _ASSOC = Union{Sum, Product}            # only these flatten into sibling chains
 const _TIED_COLOR = 208                      # ANSI 256-color orange
 
@@ -22,13 +21,13 @@ _fmt(v) = string(v)
 # chains like `a + b + c` flat, but guards `a + b*c` vs `(a+b)*c`).
 function _expr(node, parentop = nothing)
     node isa Leaf && return string(_leafname(node))
-    node isa _NODE || return sprint(show, node)
+    node isa _COMPOUND || return sprint(show, node)
     op = _opsym(node)
     inner = "$(_expr(node.left, op)) $op $(_expr(node.right, op))"
     return (parentop !== nothing && parentop != op) ? "($inner)" : inner
 end
 
-Base.show(io::IO, m::_NODE) = print(io, _expr(m))
+Base.show(io::IO, m::_COMPOUND) = print(io, _expr(m))
 Base.show(io::IO, l::Leaf) = print(io, _leafname(l))
 Base.show(io::IO, cm::CompiledModel) = print(io, _expr(getfield(cm, :tree)))
 

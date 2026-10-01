@@ -203,6 +203,15 @@ end
     fp = ObjectiveFunction(cm, x, y; statistic = logposterior)
     @test Pigeons.initialization(fp, Random.default_rng(), 1) isa Vector{Float64}
     @test Pigeons.default_reference(fp) isa Pigeons.DistributionLogPotential
+
+    # sample_names labels our targets by parameter name, and leaves Pigeons'
+    # default in charge of every other target.
+    potential(target) = Pigeons.InterpolatedLogPotential(
+        Pigeons.InterpolatingPath(Pigeons.default_reference(fp), target, Pigeons.LinearInterpolator()), 0.5
+    )
+    @test Pigeons.sample_names(u, potential(fp)) == [:g_amplitude, :g_mean, :g_sigma, :log_density]
+    @test Pigeons.sample_names(u, potential(Pigeons.toy_mvn_target(3))) ==
+        [:param_1, :param_2, :param_3, :log_density]
 end
 
 @testitem "ObjectiveFunction: data validation" tags = [:bayes] begin

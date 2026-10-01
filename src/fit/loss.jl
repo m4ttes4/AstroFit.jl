@@ -211,7 +211,7 @@ Compute the Gaussian log-likelihood at parameter vector `p`: `-0.5 * χ² + cons
 See also: [`chi2`](@ref), [`logposterior`](@ref)
 """
 @inline loglikelihood(f::ObjectiveFunction, p) = -0.5 * chi2(f, p) + f._loglike_const
-# is it necessary to save the logconstant?
+
 """
     negloglikelihood(f::ObjectiveFunction, p) -> Float64
 
@@ -222,7 +222,7 @@ negloglikelihood(f::ObjectiveFunction, p) = -loglikelihood(f, p)
 """
     logposterior(f::ObjectiveFunction, p) -> Float64
 
-Compute the log-posterior: `logprior(cm, p) + loglikelihood(f, p)`.
+Compute the log-posterior: `logprior(f, p) + loglikelihood(f, p)`.
 
 `Bounded` parameters are not automatically rejected outside their bounds —
 attach an explicit `@prior leaf.field ~ Uniform(lower, upper)` (or a
