@@ -165,3 +165,25 @@ end
     fs(p) = render(withparams(sersic, p), (0.9, 0.4))
     @test ForwardDiff.gradient(fs, params(sersic)) ≈ fd(fs, params(sersic)) rtol = 1.0e-6
 end
+
+@testitem "Const2D is a flat 2D background that composes with 2D profiles" tags = [:zoo, :twod] begin
+    using AstroFit, ForwardDiff
+
+    # the arity is in the type: a 2D point gives the value, a 1D point is refused
+    @test render(Const2D(value = 0.3), (5.0, -7.0)) ≈ 0.3
+    @test_throws "Const2D takes 2 number(s) per point, got Float64" render(Const2D(), 1.0)
+
+    cm = @model begin
+        g = Gaussian2D(amplitude = 2.0, x0 = 1.0, y0 = -1.0, sigma = 0.5, q = 1.0, theta = 0.0)
+        sky = Const2D(value = 0.3)
+        g + sky
+    end
+    @test render(cm, (1.0, -1.0)) ≈ 2.3  # g's peak plus the background
+    @test render(cm, (40.0, 40.0)) ≈ 0.3  # far from g only the background is left
+
+    # duals flow through withparams; the sum is linear in the background,
+    # so d(render)/d(sky.value) = 1 at every point
+    f(p) = render(withparams(cm, p), (1.2, -0.7))
+    k = findfirst(==(:sky_value), paramnames(cm))
+    @test ForwardDiff.gradient(f, params(cm))[k] ≈ 1.0
+end

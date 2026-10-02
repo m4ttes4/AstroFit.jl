@@ -128,3 +128,10 @@ Beta2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, r_core = 1.0, beta = 0.67, q = 1.0
     (; inv_rc2, exp_val, cost, sint, inv_q2) = m._cache_
     return m.amplitude * (1 + _rot2d(x, y, m.x0, m.y0, cost, sint, inv_q2) * inv_rc2)^exp_val
 end
+
+
+Base.@kwdef struct Const2D{T <: Real} <: AbstractModel{2, 1}
+    value::T = 0.0
+end
+
+evaluate(m::Const2D, ::NTuple{2, Number}) = m.value
