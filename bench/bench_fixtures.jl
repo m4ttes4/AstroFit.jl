@@ -14,14 +14,14 @@
 # Every case exposes the same fields, so a benchmark can loop over them:
 #
 #   cm      CompiledModel (constraints applied, validated)
-#   coords  Tuple of coordinate arrays, as passed to ObjectiveFunction
+#   points  array of points, as passed to ObjectiveFunction
 #   y       data (noisy realization of the truth), err its 1-sigma vector
 #   p       free-parameter vector (params(cm)) — the fit's starting point
 #   f       ObjectiveFunction (chi2)
 #   cfg     ForwardDiff.GradientConfig with FULL chunk, mirroring
 #           `_fullchunk` in ext/AstroFitOptimizationExt.jl
 #   g       preallocated gradient buffer
-#   out     preallocated render! buffer
+#   out     preallocated buffer for `out .= render.(m, points)`
 #
 # Data is built with an explicit Xoshiro(42) — never the global RNG — so a
 # `setup=` block that re-runs still sees identical numbers.
@@ -56,11 +56,11 @@ end
 # is what OptimizationFunction does through `AutoForwardDiff(chunksize = n)`.
 fullchunk(f, p) = ForwardDiff.GradientConfig(f, p, ForwardDiff.Chunk{length(p)}())
 
-_case(cm, coords, y, err, out) = (;
-    cm, coords, y, err, out,
+_case(cm, points, y, err, out) = (;
+    cm, points, y, err, out,
     p = params(cm),
-    f = ObjectiveFunction(cm, length(coords) == 1 ? coords[1] : coords, y, err),
-    cfg = fullchunk(ObjectiveFunction(cm, length(coords) == 1 ? coords[1] : coords, y, err), params(cm)),
+    f = ObjectiveFunction(cm, points, y, err),
+    cfg = fullchunk(ObjectiveFunction(cm, points, y, err), params(cm)),
     g = zeros(nfree(cm)),
 )
 
@@ -102,7 +102,7 @@ let truth = spec_model(slope = -0.002, intercept = 9.5, ha_amp = 10.5, ha_mean =
     y_true = render(truth, SPEC_X)
     err = fill(0.08, length(SPEC_X))
     y = y_true .+ err .* randn(RNG, length(SPEC_X))
-    global const SPEC = _case(spec_model(), (SPEC_X,), y, err, similar(y))
+    global const SPEC = _case(spec_model(), SPEC_X, y, err, similar(y))
 end
 
 # Handwritten baseline: the SPEC constraints (2 ties on mean, 2 on sigma, 1 line
@@ -214,7 +214,7 @@ let truth = wide_model(norm = 3.1, index = -1.6, ha_amp = 10.5, sigma = 4.3)
     y_true = render(truth, WIDE_X)
     err = 0.055 .+ 0.018 .* sqrt.(clamp.(y_true, 0.0, Inf))
     y = y_true .+ err .* randn(RNG, length(WIDE_X))
-    global const WIDE = _case(wide_model(), (WIDE_X,), y, err, similar(y))
+    global const WIDE = _case(wide_model(), WIDE_X, y, err, similar(y))
 end
 
 # ---------------------------------------------------------------------------
@@ -267,27 +267,20 @@ end
 
 const NPIX = 100
 const IMG_COORD = range(-8.0, 8.0; length = NPIX)
-# Two coordinate forms, both legal and NOT equally cheap (ADR-0006):
-#   materialized — a full X and Y matrix per pixel, as examples/main writes it
-#   grid form    — a column against a row, broadcast on the fly, no coord memory
-const IMG_X = [x for x in IMG_COORD, _ in IMG_COORD]
-const IMG_Y = [y for _ in IMG_COORD, y in IMG_COORD]
-const IMG_XG = collect(IMG_COORD)
-const IMG_YG = reshape(collect(IMG_COORD), 1, :)
+# Physical axes: the lazy product of two axis vectors, no per-pixel coordinate memory.
+const IMG_AXIS = collect(IMG_COORD)
+const IMG_PTS = Coords(IMG_AXIS, IMG_AXIS)
 
 let truth = img_model(
         a1 = 25.0, x1 = -2.0, y1 = -1.0, s1 = 0.8, r1 = 2.5, n1 = 1.0, q1 = 0.38, t1 = 0.8,
         a2 = 90.0, x2 = 3.0, y2 = 1.5, s2 = 1.4, r2 = 1.6, n2 = 3.5, q2 = 0.85, t2 = -0.5,
         ad1 = 50.0, ad2 = 15.0
     )
-    img_true = render(truth, IMG_X, IMG_Y)
-    err = fill(0.4, size(IMG_X))
-    img = img_true .+ err .* randn(RNG, size(IMG_X))
-    global const IMG = _case(img_model(), (IMG_X, IMG_Y), img, err, similar(img))
+    img_true = render(truth, IMG_PTS)
+    err = fill(0.4, size(IMG_PTS))
+    img = img_true .+ err .* randn(RNG, size(IMG_PTS))
+    global const IMG = _case(img_model(), IMG_PTS, img, err, similar(img))
 end
-
-# Same scene rendered through the grid form — the shape a kernel would need.
-const IMG_GRID_F = ObjectiveFunction(img_model(), (IMG_XG, IMG_YG), IMG.y, IMG.err)
 
 # Handwritten baseline for the 2D render: the IMG scene with its ties resolved,
 # written as one fused broadcast. Same 20 free parameters, same order.

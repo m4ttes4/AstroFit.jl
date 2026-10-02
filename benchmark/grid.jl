@@ -4,7 +4,7 @@ function gaussian1_lib!(out, xs)
     p = zeros(3)
     for _ in 1:100
         randn!(p)
-        render!(out, withparams(CM_WP_1, p), xs)
+        out .= render.(withparams(CM_WP_1, p), xs)
     end
     out
 end
@@ -25,7 +25,7 @@ function gaussian2_lib!(out, xs)
     p = zeros(6)
     for _ in 1:100
         randn!(p)
-        render!(out, withparams(CM_WP_2, p), xs)
+        out .= render.(withparams(CM_WP_2, p), xs)
     end
     out
 end
@@ -48,7 +48,7 @@ function gaussian4_lib!(out, xs)
     p = zeros(12)
     for _ in 1:100
         randn!(p)
-        render!(out, withparams(CM_WP_4, p), xs)
+        out .= render.(withparams(CM_WP_4, p), xs)
     end
     out
 end
@@ -74,7 +74,7 @@ function gaussian64_lib!(out, xs)
     p = zeros(192)
     for _ in 1:100
         randn!(p)
-        render!(out, withparams(CM_WP_64, p), xs)
+        out .= render.(withparams(CM_WP_64, p), xs)
     end
     out
 end
