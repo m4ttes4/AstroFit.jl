@@ -27,7 +27,7 @@ Base.@kwdef struct Occult1D{T <: Real} <: AbstractModel{1, 1}
     t0::T = 0.0
 end
 
-function AstroFit.render(m::Occult1D, t::Number)
+function AstroFit.evaluate(m::Occult1D, t::Number)
     φ = 2π * (t - m.t0) / m.period
     cos(φ) < 0 && return one(φ)
     x = m.a_rs * sin(φ)

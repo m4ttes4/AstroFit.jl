@@ -34,7 +34,7 @@ Base.@kwdef struct Occult1D{T <: Real} <: AbstractModel{1, 1}
     t0::T = 0.0       # this star's own mid-eclipse time
 end
 
-function AstroFit.render(m::Occult1D, t::Number)
+function AstroFit.evaluate(m::Occult1D, t::Number)
     φ = 2π * (t - m.t0) / m.period
     cos(φ) < 0 && return one(φ)   # far conjunction — the partner is in front, not this star
     x = m.a_rs * sin(φ)

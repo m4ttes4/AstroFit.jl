@@ -37,8 +37,7 @@ true_model = @model begin
     d2 = Gaussian1D(amplitude = -0.85, mean = L_NAD_D2 + shift, sigma = sigma_true)
     d1 = Gaussian1D(amplitude = -0.425, mean = L_NAD_D1 + shift, sigma = sigma_true)
     hei = Gaussian1D(amplitude = 0.55, mean = L_HEI + shift, sigma = 0.9)
-    psf = GaussianPSF(sigma = SIGMA_INST / STEP)
-    (cont + d2 + d1 + hei) |> psf
+    cont + d2 + d1 + hei
 end
 
 # ---------------------------------------------------------------------------
@@ -59,8 +58,7 @@ cm = @model begin
     d2 = Gaussian1D(amplitude = -0.4, mean = L_NAD_D2, sigma = 0.8)
     d1 = Gaussian1D(amplitude = -0.2, mean = L_NAD_D1, sigma = 0.8)
     hei = Gaussian1D(amplitude = 0.3, mean = L_HEI, sigma = 1.2)
-    psf = GaussianPSF(sigma = SIGMA_INST / STEP)
-    (cont + d2 + d1 + hei) |> psf
+    cont + d2 + d1 + hei
 end
 
 @constrain cm begin
@@ -73,7 +71,6 @@ end
     hei.amplitude in (0.0, 5.0)                    # emission only
     hei.mean -> d2.mean + (L_HEI - L_NAD_D2)       # same systemic velocity
     hei.sigma in (0.1, 5.0)                        # different gas, own width
-    psf.sigma                                      # known calibration, fixed
 end
 
 # ---------------------------------------------------------------------------

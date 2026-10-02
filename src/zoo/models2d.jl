@@ -1,9 +1,9 @@
 # --- 2D model library ---
 #
 # Every model keeps its parameter-only constants (the rotation, the reciprocals) in
-# `_cache_`, computed once by its positional constructor, so the scalar `render`
-# does only the per-point work. The renders are `@inline`: without it the image
-# broadcast calls them per pixel and measured 1.25x slower (Gaussian2D, 256²).
+# `_cache_`, computed once by its positional constructor, so `evaluate` does only
+# the per-point work. The evaluates are `@inline`: without it the image broadcast
+# calls them per pixel and measured 1.25x slower (Gaussian2D, 256²).
 #
 # All four models start from the same rotated, flattened radius, so it lives in
 # one helper; each model differs only in the profile applied to it.
@@ -35,7 +35,7 @@ end
 Gaussian2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, sigma = 1.0, q = 1.0, theta = 0.0) =
     Gaussian2D(amplitude, x0, y0, sigma, q, theta)
 
-@inline function render(m::Gaussian2D, x::Number, y::Number)
+@inline function evaluate(m::Gaussian2D, (x, y)::NTuple{2, Number})
     (; cost, sint, inv_q2, inv_s2) = m._cache_
     return m.amplitude * exp(-0.5 * _rot2d(x, y, m.x0, m.y0, cost, sint, inv_q2) * inv_s2)
 end
@@ -67,7 +67,7 @@ end
 Sersic2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, r_eff = 1.0, n = 1.0, q = 1.0, theta = 0.0) =
     Sersic2D(amplitude, x0, y0, r_eff, n, q, theta)
 
-@inline function render(m::Sersic2D, x::Number, y::Number)
+@inline function evaluate(m::Sersic2D, (x, y)::NTuple{2, Number})
     (; bn, inv_n, inv_r, cost, sint, inv_q2) = m._cache_
     r = sqrt(_rot2d(x, y, m.x0, m.y0, cost, sint, inv_q2))
     return m.amplitude * exp(-bn * ((r * inv_r)^inv_n - 1))
@@ -96,7 +96,7 @@ end
 Moffat2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, alpha = 1.0, beta = 1.0, q = 1.0, theta = 0.0) =
     Moffat2D(amplitude, x0, y0, alpha, beta, q, theta)
 
-@inline function render(m::Moffat2D, x::Number, y::Number)
+@inline function evaluate(m::Moffat2D, (x, y)::NTuple{2, Number})
     (; inv_a2, nbeta, cost, sint, inv_q2) = m._cache_
     return m.amplitude * (1 + _rot2d(x, y, m.x0, m.y0, cost, sint, inv_q2) * inv_a2)^nbeta
 end
@@ -124,7 +124,7 @@ end
 Beta2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, r_core = 1.0, beta = 0.67, q = 1.0, theta = 0.0) =
     Beta2D(amplitude, x0, y0, r_core, beta, q, theta)
 
-@inline function render(m::Beta2D, x::Number, y::Number)
+@inline function evaluate(m::Beta2D, (x, y)::NTuple{2, Number})
     (; inv_rc2, exp_val, cost, sint, inv_q2) = m._cache_
     return m.amplitude * (1 + _rot2d(x, y, m.x0, m.y0, cost, sint, inv_q2) * inv_rc2)^exp_val
 end

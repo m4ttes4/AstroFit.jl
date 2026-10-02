@@ -1,157 +1,129 @@
-@testitem "render!: base models write into the provided buffer" tags = [:core, :render] begin
+@testitem "render: points are laid out in axis order, first pixel at 1" tags = [:core, :render] begin
     using AstroFit
 
-    xs = collect(range(-2.0, 2.0; length = 9))
+    # Independent references: a transposed or 0-based layout changes these values.
+    struct Plane <: AbstractModel{2, 1} end
+    AstroFit.evaluate(::Plane, (x, y)::NTuple{2, Number}) = x + 10y
 
-    for model in (
-            Gaussian1D(amplitude = 2.0, mean = 0.5, sigma = 1.2),
-            Const1D(value = 3.0),
-            Linear1D(slope = -0.5, intercept = 1.0),
-        )
-        out = fill(NaN, length(xs))
-        ret = render!(out, model, xs)
-
-        @test ret === out
-        @test out ≈ render(model, xs)
-    end
+    @test render(Plane(), CartesianIndices((2, 3))) == [i + 10j for i in 1:2, j in 1:3]
+    x, y = [0.5, 1.5], [-1.0, 0.0, 2.0]
+    @test render(Plane(), Coords(x, y)) == [xi + 10yj for xi in x, yj in y]
+    @test render(Plane(), CartesianIndex(2, 3)) == 32
 end
 
-@testitem "render!: compound and compiled models match allocating render" tags = [:core, :render] begin
+@testitem "render: array methods agree with the point broadcast for every container" tags = [:core, :render] begin
     using AstroFit
 
-    xs = collect(range(-3.0, 3.0; length = 17))
-    g = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.1)
-    l = Linear1D(slope = 0.2, intercept = 0.7)
-    c = Const1D(value = 1.5)
+    line = Gaussian1D(amplitude = 2.0, mean = 0.5, sigma = 1.2)
+    disk = Gaussian2D(amplitude = 2.0, x0 = 0.1, y0 = -0.2, sigma = 1.3, q = 0.8, theta = 0.3)
+    λ = collect(range(-2.0, 2.0; length = 9))
+    img = zeros(7, 5)
+    mask = isodd.(LinearIndices(img))
 
-    models = (
-        l + g,
-        l - g,
-        g * c,
-        (g + c) / Linear1D(slope = 0.1, intercept = 2.0),
-        l |> g,
-    )
-
-    for model in models
-        out = similar(xs)
-        @test render!(out, model, xs) === out
-        @test out ≈ render(model, xs)
+    @test render(line, λ) == render.(line, λ)
+    @test render(line, range(-2.0, 2.0; length = 9)) == render.(line, λ)
+    @test render(line, CartesianIndices(λ)) == render.(line, 1:9)
+    for A in (
+            Coords(collect(1.0:7.0), collect(-2.0:2.0)),
+            CartesianIndices(img),
+            CartesianIndices(img)[mask],
+            [(1, 2.0), (0.5, -1)],  # scattered points, mixed element types
+            fill((0.0, 0.0)),  # 0-dimensional
+        )
+        @test render(disk, A) == render.(disk, A)
     end
+    # A model broadcasts as a scalar: a 0-d input gives one value, not a 1-element vector.
+    @test render.(line, fill(0.5)) == render(line, 0.5)
 
     cm = @model begin
-        cont = Linear1D(slope = 0.2, intercept = 0.7)
-        line = Gaussian1D(amplitude = 2.0, mean = 0.0, sigma = 1.1)
-        cont + line
+        a = Gaussian2D(amplitude = 2.0, x0 = 3.0, y0 = 2.0, sigma = 1.3, q = 0.8, theta = 0.3)
+        b = Gaussian2D(amplitude = 1.0, x0 = 5.0, y0 = 4.0, sigma = 2.0, q = 1.0, theta = 0.0)
+        a + b
     end
-
-    out = similar(xs)
-    @test render!(out, cm, xs) === out
-    @test out ≈ render(cm, xs)
+    @test render.(cm, CartesianIndices(img)) == render(cm, CartesianIndices(img))
+    @test render(cm, (3.0, 2.0)) ≈ 2.0 + exp(-(4 + 4) / 8)  # a's peak, b two pixels off in each axis
 end
 
-@testitem "render!: 2D models take grid-form coordinates without allocating" tags = [:core, :render] begin
+@testitem "render: a 2 => 2 transform pipes coordinates into a 2D model" tags = [:core, :render] begin
     using AstroFit
 
-    xa = collect(range(-2.0, 2.0; length = 7))
-    ya = collect(range(-1.0, 1.0; length = 5))
-    col, row = xa, reshape(ya, 1, :)                        # grid form: one axis per dimension
-    Xm = repeat(xa, 1, length(ya))                          # the same grid as a co-shaped point list
-    Ym = repeat(row, length(xa), 1)
-
-    models = (
-        Gaussian2D(amplitude = 2.0, x0 = 0.1, y0 = -0.2, sigma = 1.3, q = 0.8, theta = 0.3),
-        Sersic2D(amplitude = 2.0, x0 = 0.1, y0 = -0.2, r_eff = 1.5, n = 2.0, q = 0.8, theta = 0.3),
-        Moffat2D(amplitude = 2.0, x0 = 0.1, y0 = -0.2, alpha = 1.2, beta = 2.0, q = 0.8, theta = 0.3),
-        Beta2D(amplitude = 2.0, x0 = 0.1, y0 = -0.2, r_core = 1.2, beta = 0.7, q = 0.8, theta = 0.3),
-    )
-
-    for m in models
-        ref = render(m, Xm, Ym)
-        @test size(ref) == (length(xa), length(ya))
-        @test render(m, col, row) ≈ ref                     # both forms describe one image
-
-        out = fill(NaN, size(ref))
-        @test render!(out, m, col, row) === out
-        @test out ≈ ref
-        fill!(out, NaN)
-        @test render!(out, m, Xm, Ym) ≈ ref
+    struct Rot{T <: Real} <: AbstractModel{2, 2}
+        theta::T
     end
+    AstroFit.evaluate(r::Rot, (x, y)::NTuple{2, Number}) =
+        (cos(r.theta) * x - sin(r.theta) * y, sin(r.theta) * x + cos(r.theta) * y)
 
-    # The buffer is the whole story: what render! allocates must not grow with the
-    # grid. Compared across two sizes so the testitem's global access can't skew it.
-    g = models[1]
-    bigcol = collect(range(-2.0, 2.0; length = 70))
-    bigrow = reshape(collect(range(-1.0, 1.0; length = 50)), 1, :)
-    outsmall, outbig = fill(NaN, 7, 5), fill(NaN, 70, 50)
-    render!(outsmall, g, col, row)
-    render!(outbig, g, bigcol, bigrow)
-
-    a_small = @allocated render!(outsmall, g, col, row)
-    a_big = @allocated render!(outbig, g, bigcol, bigrow)
-    @test a_small == a_big
-    @test a_big < 512
-
-    # And the allocating render pays for the output array and nothing else —
-    # compared against the bare array rather than against sizeof, since the
-    # allocator rounds a 28000-byte array up to whole pages either way.
-    allocrender(m, a, b) = @allocated render(m, a, b)
-    allocarray(dims) = @allocated Array{Float64}(undef, dims)
-    allocrender(g, bigcol, bigrow)
-    allocarray((70, 50))
-    @test allocrender(g, bigcol, bigrow) == allocarray((70, 50))
+    g = Gaussian2D(amplitude = 1.0, x0 = 1.0, y0 = 0.0, sigma = 0.5, q = 1.0, theta = 0.0)
+    m = Rot(π / 2) |> g
+    @test render(m, (0.0, -1.0)) ≈ 1.0  # a quarter turn takes (0, -1) to g's peak at (1, 0)
+    x, y = [0.0, 1.0], [-1.0, 0.0]
+    # a quarter turn maps (x, y) to (-y, x)
+    @test render(m, Coords(x, y)) ≈ [exp(-((-yj - 1)^2 + xi^2) / (2 * 0.5^2)) for xi in x, yj in y]
 end
 
-@testitem "render: a lone matrix is the index grid, not values" tags = [:core, :render] begin
+@testitem "render: in-place broadcast allocates nothing" tags = [:core, :render] begin
     using AstroFit
 
-    g = Gaussian2D(amplitude = 2.0, x0 = 5.0, y0 = 3.0, sigma = 1.5, q = 0.8, theta = 0.3)
-    img = zeros(9, 7)
-
-    r = render(g, img)
-    @test size(r) == size(img)
-    @test r == render(g, axes(img, 1), reshape(axes(img, 2), 1, :))
-    @test r == render(g, 1:9, reshape(1:7, 1, :))
-    @test render(g, fill(999.0, 9, 7)) == r        # the values are a template, nothing more
-
-    out = fill(NaN, 9, 7)
-    @test render!(out, g) === out
-    # `≈`, not `==`: the zoo's render! hoists the divisions into reciprocals, so
-    # it rounds differently from the scalar render broadcast above.
-    @test out ≈ r
-
-    # A single vector still means coordinate values — the index-grid reading is
-    # for matrices only, or every 1D render would change meaning.
-    l = Gaussian1D(amplitude = 1.0, mean = 0.0, sigma = 1.0)
-    xs = collect(-2.0:0.5:2.0)
-    @test render(l, xs) == render.(l, xs)
-
-    allocbang(o, m) = @allocated render!(o, m)
-    allocrender(m, i) = @allocated render(m, i)
-    allocarray(d) = @allocated Array{Float64}(undef, d)
-    big, bigout = zeros(70, 50), fill(NaN, 70, 50)
-    allocbang(bigout, g)
-    allocrender(g, big)
-    allocarray((70, 50))
-    @test allocbang(bigout, g) == 0
-    @test allocrender(g, big) == allocarray((70, 50))
+    cm = @model begin
+        a = Gaussian2D(amplitude = 2.0, x0 = 3.0, y0 = 2.0, sigma = 1.3, q = 0.8, theta = 0.3)
+        b = Sersic2D(amplitude = 1.0, x0 = 5.0, y0 = 4.0, r_eff = 2.0, n = 1.5, q = 0.9, theta = 0.1)
+        a + b
+    end
+    out = zeros(40, 30)
+    fill_ci!(o, m) = @allocated o .= render.(m, CartesianIndices(o))
+    fill_co!(o, m, A) = @allocated o .= render.(m, A)
+    co = Coords(collect(1.0:40.0), collect(1.0:30.0))
+    fill_ci!(out, cm); fill_co!(out, cm, co)
+    @test fill_ci!(out, cm) == 0
+    @test fill_co!(out, cm, co) == 0
 end
 
-@testitem "render!: generic fallback supports custom multi-coordinate models" tags = [:core, :render] begin
+@testitem "render: wrong inputs throw an ArgumentError that names the rule" tags = [:core, :render] begin
     using AstroFit
 
-    struct TestPlane2D{T <: Real} <: AbstractModel{2, 1}
-        a::T
-        b::T
-        c::T
+    line = Gaussian1D()
+    disk = Gaussian2D()
+    λ = [1.0, 2.0, 3.0]
+    img = zeros(3, 4)
+
+    arrays = "is not a set of points: use CartesianIndices(A)"
+    @test_throws "an array of numbers with 2 dimension(s) $arrays" render(disk, img)
+    @test_throws "an array of numbers with 2 dimension(s) $arrays" render(line, img)
+    @test_throws "an array of numbers with 0 dimension(s) $arrays" render(line, fill(1.0))
+    @test_throws "Gaussian2D takes 2 numbers per point, got a vector of numbers" render(disk, λ)
+    @test_throws "Gaussian2D takes 2 number(s) per point, got an array of CartesianIndex{1}" render(disk, CartesianIndices(λ))
+    @test_throws "Gaussian1D takes 1 number(s) per point, got an array of Tuple{Float64, Float64}" render(line, Coords(λ, λ))
+    @test_throws "Gaussian2D takes 2 number(s) per point, got Float64" render(disk, 1.0)
+    @test_throws "Gaussian1D takes 1 number(s) per point, got Tuple{Float64, Float64}" render(line, (1.0, 2.0))
+    @test_throws "Gaussian1D takes 1 number per point: pass the number, not a 1-tuple" render(line, (1.0,))
+    @test_throws "Gaussian2D takes 2 number(s) per point, got Float64" render.(disk, img)
+
+    cm = @model begin
+        g = Gaussian1D()
+        g
     end
+    @test_throws "g takes 1 number(s) per point, got String" render(cm, "x")  # the leaf, by name
+end
 
-    AstroFit.render(m::TestPlane2D, x::Number, y::Number) = m.a * x + m.b * y + m.c
+@testitem "render: author mistakes are reported at the faulty component" tags = [:core, :render] begin
+    using AstroFit
 
-    xs = reshape(collect(1.0:6.0), 2, 3)
-    ys = xs ./ 10
-    model = TestPlane2D(2.0, -3.0, 0.5)
-    out = similar(xs)
+    struct WantsPair <: AbstractModel{2, 1} end
+    AstroFit.evaluate(::WantsPair, x::Number) = x  # declares 2 inputs, implements 1
+    struct TwoOut <: AbstractModel{1, 2} end
+    AstroFit.evaluate(::TwoOut, x::Number) = x  # declares 2 outputs, returns 1
+    struct OneOut <: AbstractModel{1, 1} end
+    AstroFit.evaluate(::OneOut, x::Number) = (x, x)  # declares 1 output, returns 2
 
-    @test render!(out, model, xs, ys) === out
-    @test out ≈ render(model, xs, ys)
+    @test_throws "WantsPair takes 2 number(s) per point, got Float64" render(WantsPair(), 1.0)
+    @test_throws "TwoOut declares 2 output(s) per point, but evaluate returned a Float64" render(TwoOut(), 1.0)
+    @test_throws "OneOut declares 1 output(s) per point, but evaluate returned a Tuple{Float64, Float64}" render(OneOut(), 1.0)
+
+    # deep in a tree the message still names the component, not the root
+    cm = @model begin
+        g = Gaussian1D()
+        bad = OneOut()
+        g + bad
+    end
+    @test_throws "OneOut declares 1 output(s)" render(cm, [1.0, 2.0])
 end

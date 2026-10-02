@@ -2,7 +2,7 @@
 # Run with:  julia --project=examples/ examples/spiral_galaxy_preview.jl
 
 using AstroFit
-import AstroFit: render          # extend render for the inline model
+import AstroFit: evaluate        # extend evaluate for the inline model
 using CairoMakie
 
 Base.@kwdef struct SpiralArm2D{T <: Real} <: AbstractModel{2, 1}
@@ -19,7 +19,7 @@ Base.@kwdef struct SpiralArm2D{T <: Real} <: AbstractModel{2, 1}
     r_in::T = 0.5
 end
 
-function render(s::SpiralArm2D, x::Number, y::Number)
+function evaluate(s::SpiralArm2D, (x, y)::NTuple{2, Number})
     dx, dy = x - s.x0, y - s.y0
     cost, sint = cos(s.theta), sin(s.theta)
     xr = cost * dx + sint * dy

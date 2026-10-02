@@ -47,8 +47,7 @@ true_model = @model begin
     d2 = Gaussian1D(amplitude = -0.85, mean = L_NAD_D2 + shift, sigma = sigma_true)
     d1 = Gaussian1D(amplitude = -0.425, mean = L_NAD_D1 + shift, sigma = sigma_true)
     hei = Gaussian1D(amplitude = 0.55, mean = L_HEI + shift, sigma = 0.9)
-    psf = GaussianPSF(sigma = SIGMA_INST / STEP)
-    (cont + d2 + d1 + hei) |> psf
+    cont + d2 + d1 + hei
 end
 
 # ---------------------------------------------------------------------------
@@ -69,8 +68,7 @@ cm = @model begin
     d2 = Gaussian1D(amplitude = -0.4, mean = L_NAD_D2, sigma = 0.8)
     d1 = Gaussian1D(amplitude = -0.2, mean = L_NAD_D1, sigma = 0.8)
     hei = Gaussian1D(amplitude = 0.3, mean = L_HEI, sigma = 1.2)
-    psf = GaussianPSF(sigma = SIGMA_INST / STEP)
-    (cont + d2 + d1 + hei) |> psf
+    cont + d2 + d1 + hei
 end
 
 # Same bounds/ties/fixes as the MAP example, now with a prior on every free
@@ -89,7 +87,6 @@ end
     d1.mean -> d2.mean + (L_NAD_D1 - L_NAD_D2)     # atomic separation
     d1.sigma -> d2.sigma                           # same gas
     hei.mean -> d2.mean + (L_HEI - L_NAD_D2)       # same systemic velocity
-    psf.sigma                                      # known calibration, fixed
     cont.slope 
     # --- priors ---
     # continuum lives on ℝ: near the data the level is ~1, but slope and

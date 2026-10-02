@@ -29,13 +29,13 @@ Base.@kwdef struct RedshiftAxis1D{T <: Real} <: AbstractModel{1, 1}
     z::T = 0.0
 end
 
-AstroFit.render(m::RedshiftAxis1D, lambda::Number) = lambda / (1 + m.z)
+AstroFit.evaluate(m::RedshiftAxis1D, lambda::Number) = lambda / (1 + m.z)
 
 Base.@kwdef struct RedshiftFluxScale1D{T <: Real} <: AbstractModel{1, 1}
     z::T = 0.0
 end
 
-AstroFit.render(m::RedshiftFluxScale1D, lambda::Number) = inv(1 + m.z)
+AstroFit.evaluate(m::RedshiftFluxScale1D, lambda::Number) = inv(1 + m.z)
 
 function galaxy_spectrum_model(;
         z = 0.036,

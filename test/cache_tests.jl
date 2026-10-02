@@ -10,7 +10,7 @@
             return new{S, T, typeof(c)}(sigma, theta, c)
         end
     end
-    AstroFit.render(m::Tilted, x::Number) = m._cache_[1] * x
+    AstroFit.evaluate(m::Tilted, x::Number) = m._cache_[1] * x
 
     cm = @model begin
         t = Tilted(2.0, 0.5)
@@ -50,7 +50,7 @@ end
     struct Mirrored{A <: Real} <: AstroFit.AbstractModel{1, 1}
         amplitude::A
     end
-    AstroFit.render(m::Mirrored, x::Number) = m.amplitude
+    AstroFit.evaluate(m::Mirrored, x::Number) = m.amplitude
     AstroFit.constructorof(::Type{<:Mirrored}) = a -> Mirrored(abs(a))
 
     cm = @model begin

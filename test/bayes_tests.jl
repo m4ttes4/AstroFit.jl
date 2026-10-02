@@ -106,10 +106,9 @@ end
     x = [1.0, 2.0, 3.0]
     y = [2.0, 3.0, 0.0]
     err = [1.0, 2.0, 4.0]
-    expected = sum(abs2, (render(cm, x) .- y) ./ err)
-
-    @test chi2(cm.tree, (x,), y, err) == expected
-    @test chi2(cm.tree, (x,), y, nothing) == sum(abs2, render(cm, x) .- y)
+    # residuals 0, -1, 2: weighted 0 + (1/2)² + (2/4)², unweighted 0 + 1 + 4
+    @test chi2(ObjectiveFunction(cm, x, y, err), params(cm)) == 0.5
+    @test chi2(ObjectiveFunction(cm, x, y), params(cm)) == 5.0
 end
 
 @testitem "ObjectiveFunction: 1D evaluation and Optimization.jl convention" tags = [:bayes] begin
@@ -139,14 +138,22 @@ end
         g = Gaussian2D(amplitude = 2.0, x0 = 0.0, y0 = 0.0, sigma = 1.0, q = 1.0, theta = 0.0)
         g
     end
-    xs = repeat(collect(-2.0:0.5:2.0), outer = 9)
-    ys = repeat(collect(-2.0:0.5:2.0), inner = 9)
-    y = render(cm, xs, ys)
+    c = collect(-2.0:0.5:2.0)
+    pts = Coords(c, c)
+    y = render(cm, pts)
     u = params(cm)
 
-    f = ObjectiveFunction(cm, (xs, ys), y)
-    @test f(u) ≈ 0.0 atol = 1.0e-20
+    f = ObjectiveFunction(cm, pts, y)
+    @test f(u) == 0.0
     @test f(u .+ 0.1) > 0.0
+
+    # A masked fit is a mask on the points: corrupted pixels outside it are ignored.
+    pix = CartesianIndices((9, 9))
+    img = render(cm, pix)
+    bad = copy(img); bad[1, :] .= 1.0e6
+    keep = trues(9, 9); keep[1, :] .= false
+    @test ObjectiveFunction(cm, pix[keep], bad[keep])(u) == 0.0
+    @test ObjectiveFunction(cm, pix, bad)(u) > 1.0e12
 end
 
 @testitem "ObjectiveFunction: statistic is a callable" tags = [:bayes] begin
@@ -224,9 +231,30 @@ end
     x = [1.0, 2.0, 3.0]
     y = [1.0, 1.0, 1.0]
 
-    @test_throws ArgumentError ObjectiveFunction(cm, x, y[1:2])
+    @test_throws DimensionMismatch ObjectiveFunction(cm, x, y[1:2])
+    @test_throws DimensionMismatch ObjectiveFunction(cm, x, y, [1.0, 1.0])
     @test_throws ArgumentError ObjectiveFunction(cm, x, y, [1.0, 0.0, 1.0])
     @test_throws ArgumentError ObjectiveFunction(cm, x, y, [1.0, -1.0, 1.0])
+    @test_throws "at least one data point" ObjectiveFunction(cm, Float64[], Float64[])
+    @test_throws "takes an array of points" ObjectiveFunction(cm, (x,), y)  # the old tuple form
+
+    # render's rules, checked once at construction on a single point
+    disk = @model begin
+        d = Gaussian2D()
+        d
+    end
+    img = zeros(3, 4)
+    @test_throws "an array of numbers with 2 dimension(s) is not a set of points" ObjectiveFunction(disk, img, img)
+
+    # one value per point is part of the signature
+    struct Rot{T <: Real} <: AbstractModel{2, 2}
+        theta::T
+    end
+    rot = @model begin
+        r = Rot(0.1)
+        r
+    end
+    @test_throws "a fit needs one value per point; this model produces 2" ObjectiveFunction(rot, CartesianIndices(img), img)
 end
 
 @testitem "ObjectiveFunction: allocation-free hot path" tags = [:bayes] begin
@@ -250,20 +278,67 @@ end
     @test a1 == a2
     @test a2 < 512
 
-    # Grid-form coordinates read through a lazy Broadcasted: nothing is
-    # materialized there either, at either grid size.
+    # 2D points, pixels or physical axes: the prediction is never materialized.
     cm2 = @model begin
-        g = Gaussian2D(amplitude = 2.0, x0 = 0.0, y0 = 0.0, sigma = 1.0, q = 1.0, theta = 0.0)
+        g = Gaussian2D(amplitude = 2.0, x0 = 5.0, y0 = 5.0, sigma = 1.0, q = 1.0, theta = 0.0)
         g
     end
-    mk2(n) = (
-        c = collect(range(-3, 3; length = n));
-        col = c; row = reshape(c, 1, :);
-        ObjectiveFunction(cm2, (col, row), render(cm2, col, row))
-    )
-    g1, g2 = mk2(10), mk2(60)
     v = params(cm2)
-    g1(v); g2(v)
-    @test @allocated(g1(v)) == @allocated(g2(v))
-    @test @allocated(g2(v)) < 512
+    for mk in (
+            n -> CartesianIndices((n, n)),
+            n -> (c = collect(range(0.0, 10.0; length = n)); Coords(c, c)),
+        )
+        f1, f2 = (ObjectiveFunction(cm2, mk(n), render(cm2, mk(n))) for n in (10, 60))
+        f1(v); f2(v)
+        @test @allocated(f1(v)) == @allocated(f2(v))
+        @test @allocated(f2(v)) < 512
+    end
+end
+
+@testitem "ObjectiveFunction: chi2 is inferred and differentiable on 2D points" tags = [:bayes] begin
+    using AstroFit, ForwardDiff, Test
+
+    cm = @model begin
+        a = Gaussian2D(amplitude = 2.0, x0 = 0.3, y0 = -0.2, sigma = 1.1, q = 0.8, theta = 0.4)
+        b = Sersic2D(amplitude = 1.0, x0 = -0.5, y0 = 0.4, r_eff = 1.5, n = 1.5, q = 0.9, theta = 0.1)
+        a + b
+    end
+    pts = Coords(collect(range(-3.0, 3.0; length = 15)), collect(range(-2.0, 2.0; length = 11)))
+    f = ObjectiveFunction(cm, pts, render(cm, pts), fill(0.1, size(pts)))
+    p = params(cm) .+ 0.05 .* (1:nfree(cm)) ./ nfree(cm)  # away from the minimum
+
+    pd = ForwardDiff.Dual{Nothing}.(p, 1.0)
+    @test @inferred(chi2(f, pd)) isa ForwardDiff.Dual
+    # the fused residual broadcast over dual parameters agrees with the χ² loop
+    md = withparams(cm, pd)
+    @test sum(abs2, (render.(md, pts) .- f.y) ./ f.err) ≈ chi2(f, pd)
+
+    # Central differences are an independent reference: error ~h² ≈ 1e-12, rounding ~eps/h ≈ 1e-10.
+    g = ForwardDiff.gradient(f, p)
+    h = 1.0e-6
+    for i in eachindex(p)
+        step = zeros(length(p)); step[i] = h
+        @test g[i] ≈ (f(p .+ step) - f(p .- step)) / 2h rtol = 1.0e-6
+    end
+end
+
+@testitem "ObjectiveFunction: fits through Optimization" tags = [:bayes] begin
+    using AstroFit
+    using Optimization, OptimizationOptimJL
+
+    x = collect(-10.0:0.2:10.0)
+    truth = @model begin
+        line = Gaussian1D(amplitude = 2.0, mean = 1.0, sigma = 1.0)
+        cont = Const1D(value = 0.5)
+        line + cont
+    end
+    y = render(truth, x)
+
+    start = @model begin
+        line = Gaussian1D(amplitude = 1.0, mean = 0.0, sigma = 2.0)
+        cont = Const1D(value = 0.1)
+        line + cont
+    end
+    sol = solve(OptimizationProblem(start, x, y), Optim.LBFGS())
+    @test sol.u ≈ [2.0, 1.0, 1.0, 0.5] rtol = 1.0e-4
 end

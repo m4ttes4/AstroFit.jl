@@ -5,10 +5,9 @@
 # NOTE the stale `bench/Project.toml` belongs to the older scripts in this folder
 # and is NOT used by this suite.
 #
-# Four cases, each a cut-down version of a real script in examples/main:
+# Three cases, each a cut-down version of a real script in examples/main:
 #
 #   SPEC  Halpha + [NII] doublet over a linear continuum   — pointwise 1D, ties, 6 free
-#   NAD   Na I D doublet + He I behind a fixed GaussianPSF — DOMAINWISE (kernel), 7 free
 #   WIDE  13-leaf galaxy spectrum, tie-heavy               — wide pointwise tree, 12 free
 #   IMG   two blended galaxies (bulge + disk)              — 2D, 100x100 image, 20 free
 #
@@ -127,53 +126,6 @@ function hand_spec_chi2(p, x, y, err)
 end
 
 # ---------------------------------------------------------------------------
-# NAD — Na I D doublet + He I through a fixed instrumental PSF.
-# The kernel makes the whole tree DOMAINWISE: no broadcast fusion, the
-# convolution allocates its working array. This is the other rendering regime.
-# ---------------------------------------------------------------------------
-
-const L_NAD_D2 = 5889.95
-const L_NAD_D1 = 5895.92
-const L_HEI = 5875.62
-const NAD_STEP = 0.1
-const SIGMA_INST = 1.6
-
-function nad_model(; slope = 0.0, intercept = 1.0, d2_amp = -0.4, d2_mean = L_NAD_D2, d2_sigma = 0.8, hei_amp = 0.3, hei_sigma = 1.2)
-    cm = @model begin
-        cont = Linear1D(slope = slope, intercept = intercept)
-        d2 = Gaussian1D(amplitude = d2_amp, mean = d2_mean, sigma = d2_sigma)
-        d1 = Gaussian1D(amplitude = 0.5 * d2_amp, mean = d2_mean + (L_NAD_D1 - L_NAD_D2), sigma = d2_sigma)
-        hei = Gaussian1D(amplitude = hei_amp, mean = L_HEI, sigma = hei_sigma)
-        psf = GaussianPSF(sigma = SIGMA_INST / NAD_STEP)
-        (cont + d2 + d1 + hei) |> psf
-    end
-    @constrain cm begin
-        cont.slope in (-0.1, 0.1)
-        cont.intercept in (0.0, 5.0)
-        d2.amplitude in (-5.0, 0.0)
-        d2.mean in (5885.0, 5895.0)
-        d2.sigma in (0.1, 3.0)
-        d1.amplitude -> 0.5 * d2.amplitude            # optically thin 2:1
-        d1.mean -> d2.mean + (L_NAD_D1 - L_NAD_D2)
-        d1.sigma -> d2.sigma
-        hei.amplitude in (0.0, 5.0)
-        hei.mean -> d2.mean + (L_HEI - L_NAD_D2)      # same systemic velocity
-        hei.sigma in (0.1, 5.0)
-        psf.sigma                                     # known calibration
-    end
-    return cm
-end
-
-const NAD_X = collect(5860.0:NAD_STEP:5925.0)
-
-let truth = nad_model(slope = -0.0015, intercept = 9.835 / 10, d2_amp = -0.85, d2_mean = L_NAD_D2 + 0.88, d2_sigma = 0.45, hei_amp = 0.55, hei_sigma = 0.9)
-    y_true = render(truth, NAD_X)
-    err = fill(0.02, length(NAD_X))
-    y = y_true .+ err .* randn(RNG, length(NAD_X))
-    global const NAD = _case(nad_model(), (NAD_X,), y, err, similar(y))
-end
-
-# ---------------------------------------------------------------------------
 # WIDE — 13 leaves, most of them tied to one master line. Stresses the tree
 # depth of the generated `withparams` and of the fused broadcast in `render`.
 # ---------------------------------------------------------------------------
@@ -181,6 +133,7 @@ end
 const L_HD = 4101.73
 const L_HG = 4340.47
 const L_HEII = 4685.68
+const L_HEI = 5875.62
 const L_HB = 4861.33
 const L_OIII_B = 4958.91
 const L_OIII_R = 5006.84
@@ -386,4 +339,4 @@ const POST = let cm = spec_prior_model()
     (; cm, f, p, cfg = fullchunk(f, p), g = zeros(length(p)))
 end
 
-const CASES = (; SPEC, NAD, WIDE, IMG)
+const CASES = (; SPEC, WIDE, IMG)

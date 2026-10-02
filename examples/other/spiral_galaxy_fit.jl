@@ -19,7 +19,7 @@
 # Run with:  julia --project=examples/ examples/spiral_galaxy_fit.jl
 
 using AstroFit
-import AstroFit: render          # extend render for the inline model
+import AstroFit: evaluate        # extend evaluate for the inline model
 using Optimization, OptimizationOptimJL, ForwardDiff
 using Distributions               # weak prior to regularize the degenerate flux direction
 using CairoMakie
@@ -51,7 +51,7 @@ SpiralArm2D(a::Real, x0::Real, y0::Real, r_s::Real, incl::Real, theta::Real,
     pitch::Real, phi0::Real, m::Real, kappa::Real, r_in::Real) =
     SpiralArm2D(promote(a, x0, y0, r_s, incl, theta, pitch, phi0, m, kappa, r_in)...)
 
-function render(s::SpiralArm2D, x::Number, y::Number)
+function evaluate(s::SpiralArm2D, (x, y)::NTuple{2, Number})
     dx, dy = x - s.x0, y - s.y0
     cost, sint = cos(s.theta), sin(s.theta)
     xr = cost * dx + sint * dy          # along major axis

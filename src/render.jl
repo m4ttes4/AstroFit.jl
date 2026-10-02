@@ -1,117 +1,63 @@
-struct Pointwise end
-struct Domainwise end
+"""
+    evaluate(m, x::Number)
+    evaluate(m, p::NTuple{I, Number})
+
+The method a model author implements: the output of `m` at one point, a `Number`
+for a 1-input model and an `NTuple{I, Number}` otherwise. It returns a `Number`
+(`O = 1`) or an `NTuple{O, Number}`. Not exported: extend it as
+`AstroFit.evaluate(m::MyModel, x::Number) = …`. Users call [`render`](@ref).
+"""
+function evaluate end
 
 """
-    evalstyle(m) -> Pointwise() | Domainwise()
+    render(m, x)
+    render(m, A::AbstractArray)
 
-Declare how a model consumes array inputs. The default, `Pointwise()`, broadcasts
-the model's scalar `render(m, x::Number...)` method. An array-native model defines
-`render(m, xs::AbstractArray...)` and opts in with
-`AstroFit.evalstyle(::Type{<:MyModel}) = Domainwise()`.
-
-[`AbstractKernel`](@ref) already declares `Domainwise()`. Its single array is
-upstream intensities, and its output must preserve the input axes. Other
-array-native models receive coordinates at the root, or values inside a pipe.
-
-Wrappers preserve the style; a compound is pointwise only if both children are.
+Evaluate model `m` at one point `x` (a `Number` for a 1-input model, an
+`NTuple{I, Number}` or a `CartesianIndex{I}` otherwise), or at every point of an
+array: a vector of numbers (1D), `CartesianIndices(img)`, `Coords(x, y, …)`, or any
+array of points. `out .= render.(m, A)` is the in-place form.
 """
-evalstyle(m) = evalstyle(typeof(m))
-evalstyle(::Type{<:AbstractModel}) = Pointwise()
-evalstyle(::Type{<:AbstractKernel}) = Domainwise()
-@inline _combine(::Pointwise, ::Pointwise) = Pointwise()
-@inline _combine(_, _) = Domainwise()
-evalstyle(::Type{N}) where {N <: _COMPOUND} =
-    _combine(evalstyle(fieldtype(N, :left)), evalstyle(fieldtype(N, :right)))
-evalstyle(::Type{<:Leaf{name, I, O, M}}) where {name, I, O, M} = evalstyle(M)
-evalstyle(::Type{CompiledModel{T, P}}) where {T, P} = evalstyle(T)
-
-# `template` is true for external coordinates and false for upstream values.
-# Only external lone matrices can invoke the legacy index-grid shorthand.
-# The flag is constant through each traversal and is not an authoring protocol.
-@inline _eval(m, xs...) = _evaluate(true, m, xs...)
-@inline _evaluate(template::Bool, m, xs...) = _evaluate(evalstyle(m), template, m, xs...)
-@inline _evaluate(template::Bool, l::Leaf, xs...) = _evaluate(template, l.model, xs...)
-@inline _evaluate(template::Bool, cm::CompiledModel, xs...) = _evaluate(template, getfield(cm, :tree), xs...)
-
-@inline _broadcast(m, xs...) = Base.Broadcast.instantiate(Base.Broadcast.broadcasted(render, (m,), xs...))
-@inline _gridaxes(a::AbstractMatrix) = (axes(a, 1), reshape(axes(a, 2), 1, :))
-@inline _evaluate(::Pointwise, ::Bool, m, xs...) = _broadcast(m, xs...)
-@inline _evaluate(::Pointwise, template::Bool, m, image::AbstractMatrix) =
-    template ? _broadcast(m, _gridaxes(image)...) : _broadcast(m, image)
-
-# Concrete array methods are the domainwise primitive. The public fallback below
-# throws for a domainwise leaf, so an unsupported signature cannot recurse here.
-@inline _evaluate(::Domainwise, ::Bool, m, xs...) = render(m, map(Base.Broadcast.materialize, xs)...)
-@inline function _evaluate(::Domainwise, ::Bool, k::AbstractKernel, xs...)
-    inputs = map(Base.Broadcast.materialize, xs)
-    length(inputs) == 1 && inputs[1] isa AbstractArray || throw(
-        ArgumentError("$(nameof(typeof(k))) requires one intensity array")
-    )
-    values = render(k, inputs...)
-    values isa AbstractArray && axes(values) == axes(inputs[1]) || throw(
-        DimensionMismatch("$(nameof(typeof(k))) must return an array with the same axes as its input")
-    )
-    return values
+@inline function render(m::AbstractModel{1, O}, x::Number) where {O}
+    y = evaluate(m, x)
+    y isa (O == 1 ? Number : NTuple{O, Number}) ||
+        throw(ArgumentError("$(_label(m)) declares $O output(s) per point, but evaluate returned a $(typeof(y))"))
+    return y
 end
-
-@inline _lazyop(op, l, r) = Base.Broadcast.instantiate(Base.Broadcast.broadcasted(op, l, r))
-@inline _evaluate(::Domainwise, t::Bool, m::Sum, xs...) =
-    _lazyop(+, _evaluate(t, m.left, xs...), _evaluate(t, m.right, xs...))
-@inline _evaluate(::Domainwise, t::Bool, m::Difference, xs...) =
-    _lazyop(-, _evaluate(t, m.left, xs...), _evaluate(t, m.right, xs...))
-@inline _evaluate(::Domainwise, t::Bool, m::Product, xs...) =
-    _lazyop(*, _evaluate(t, m.left, xs...), _evaluate(t, m.right, xs...))
-@inline _evaluate(::Domainwise, t::Bool, m::Quotient, xs...) =
-    _lazyop(/, _evaluate(t, m.left, xs...), _evaluate(t, m.right, xs...))
-@inline _evaluate(::Domainwise, t::Bool, m::Pipe, xs...) =
-    _evaluate(false, m.right, _evaluate(t, m.left, xs...))
-
-# The generic allocating entry point is also the terminal fallback for missing
-# domainwise primitives. Structural nodes and wrappers have their own entry.
-const _RenderInput = Union{Number, AbstractArray}
-@inline render(m::AbstractModel, xs::_RenderInput...) = _renderfallback(evalstyle(m), m, xs...)
-@inline _renderfallback(::Pointwise, m, xs...) = Base.Broadcast.materialize(_eval(m, xs...))
-function _renderfallback(::Domainwise, m, xs...)
-    throw(ArgumentError("$(nameof(typeof(m))) has no array render method for $(map(typeof, xs))"))
+@inline function render(m::AbstractModel{N, O}, p::NTuple{N, Number}) where {N, O}
+    y = evaluate(m, p)
+    y isa (O == 1 ? Number : NTuple{O, Number}) ||
+        throw(ArgumentError("$(_label(m)) declares $O output(s) per point, but evaluate returned a $(typeof(y))"))
+    return y
 end
-# Missing scalar formulas must terminate instead of broadcasting themselves.
-render(m::AbstractModel, xs::Number...) = throw(MethodError(render, (m, xs...)))
-render(m::Union{_COMPOUND, Leaf}, xs::_RenderInput...) = Base.Broadcast.materialize(_eval(m, xs...))
+render(m::AbstractModel{1}, p::Tuple{Number}) =
+    throw(ArgumentError("$(_label(m)) takes 1 number per point: pass the number, not a 1-tuple"))
+@inline render(m::AbstractModel{1}, i::CartesianIndex{1}) = render(m, i[1])
+@inline render(m::AbstractModel{N}, i::CartesianIndex{N}) where {N} = render(m, Tuple(i))
 
-@inline function _checkrenderaxes(out, expected)
-    axes(out) == expected || throw(DimensionMismatch("render destination axes $(axes(out)) do not match prediction axes $expected"))
-    return nothing
-end
-@inline function _copyrender!(out, values)
-    _checkrenderaxes(out, axes(values))
-    out .= values
-    return out
-end
+# Arrays of points: one method per point type, the array's N tied to the model's I.
+render(m::AbstractModel{1}, v::AbstractVector{<:Number}) = render.(m, v)
+render(m::AbstractModel{N}, A::AbstractArray{CartesianIndex{N}}) where {N} = render.(m, A)
+render(m::AbstractModel{N}, A::AbstractArray{<:NTuple{N, Number}}) where {N} = render.(m, A)
 
-"""
-    render!(out, model, coordinates...)
-    render!(out::AbstractMatrix, model)
+# Wrong inputs, from narrow to broad; each strictly less specific than the valid methods.
+render(m::AbstractModel{I}, p) where {I} =
+    throw(ArgumentError("$(_label(m)) takes $I number(s) per point, got $(typeof(p))"))
+render(m::AbstractModel{I}, v::AbstractVector{<:Number}) where {I} =
+    throw(ArgumentError("$(_label(m)) takes $I numbers per point, got a vector of numbers: pass Coords(x, y, …), CartesianIndices, or a vector of $I-tuples"))
+render(m::AbstractModel, A::AbstractArray{<:Number}) =
+    throw(ArgumentError("an array of numbers with $(ndims(A)) dimension(s) is not a set of points: use CartesianIndices(A) for its pixels, or Coords(x, y, …) for physical axes"))
+render(m::AbstractModel{I}, A::AbstractArray) where {I} =
+    throw(ArgumentError("$(_label(m)) takes $I number(s) per point, got an array of $(eltype(A))"))
 
-Write the prediction into `out` and return it. Its axes must match the prediction
-exactly, and its element type must hold the result (including dual numbers when
-differentiating). Whole-array models may allocate intermediate arrays.
+# Compound nodes forward to render on their children, so every child is checked.
+# `p` is untyped on purpose: render already accepted it as a point.
+@inline evaluate(m::Sum, p) = render(m.left, p) + render(m.right, p)
+@inline evaluate(m::Difference, p) = render(m.left, p) - render(m.right, p)
+@inline evaluate(m::Product, p) = render(m.left, p) * render(m.right, p)
+@inline evaluate(m::Quotient, p) = render(m.left, p) / render(m.right, p)
+@inline evaluate(m::Pipe, p) = render(m.right, render(m.left, p))
+@inline evaluate(l::Leaf, p) = render(l.model, p)
 
-With no coordinates, a matrix destination supplies its own index grid. A lone
-matrix coordinate is likewise a template for pointwise models, but is array data
-for domainwise leaves. Values produced inside a pipe are never templates.
-"""
-render!(out::AbstractArray, m::AbstractModel, xs...) = _copyrender!(out, _eval(m, xs...))
-render!(out::AbstractMatrix, m::AbstractModel) = render!(out, m, _gridaxes(out)...)
-# Preserve the zoo's parameter-hoisted in-place methods through named leaves.
-render!(out::AbstractArray, l::Leaf, x, xs...) = render!(out, l.model, x, xs...)
-
-# Scalar recursion also provides the fused pointwise-subtree broadcast primitive.
-@inline render(m::Sum, x::Number...) = render(m.left, x...) + render(m.right, x...)
-@inline render(m::Difference, x::Number...) = render(m.left, x...) - render(m.right, x...)
-@inline render(m::Product, x::Number...) = render(m.left, x...) * render(m.right, x...)
-@inline render(m::Quotient, x::Number...) = render(m.left, x...) / render(m.right, x...)
-@inline render(m::Pipe, x::Number...) = render(m.right, render(m.left, x...))
-@inline render(l::Leaf, x::Number...) = render(l.model, x...)
-
-render(cm::CompiledModel, x...) = render(getfield(cm, :tree), x...)
-render!(out::AbstractArray, cm::CompiledModel, x...) = render!(out, getfield(cm, :tree), x...)
+@inline render(cm::CompiledModel, x) = render(getfield(cm, :tree), x)  # forwarding: x untyped on purpose
+Base.broadcastable(cm::CompiledModel) = Ref(cm)

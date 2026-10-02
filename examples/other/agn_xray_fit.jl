@@ -54,7 +54,7 @@ Base.@kwdef struct PhAbs1D{N <: Real, Z <: Real} <: AbstractModel{1, 1}
     z::Z = 0.0               # absorber redshift
 end
 
-AstroFit.render(m::PhAbs1D, E::Number) = begin
+AstroFit.evaluate(m::PhAbs1D, E::Number) = begin
     E_rest = E * (1 + m.z)
     exp(-m.nH * NH_UNIT * photoelectric_cross_section(E_rest))
 end
@@ -73,7 +73,7 @@ Base.@kwdef struct ZCutoffPowerLaw1D{N <: Real, I <: Real, C <: Real, Z <: Real}
     z::Z = 0.0
 end
 
-AstroFit.render(m::ZCutoffPowerLaw1D, E::Number) = begin
+AstroFit.evaluate(m::ZCutoffPowerLaw1D, E::Number) = begin
     E_rest = E * (1 + m.z)
     m.norm * E_rest^(-m.index) * exp(-E_rest / m.cutoff)
 end
@@ -86,7 +86,7 @@ Base.@kwdef struct ZPartialCovering1D{N <: Real, F <: Real, Z <: Real} <: Abstra
     z::Z = 0.0
 end
 
-AstroFit.render(m::ZPartialCovering1D, E::Number) = begin
+AstroFit.evaluate(m::ZPartialCovering1D, E::Number) = begin
     E_rest = E * (1 + m.z)
     transmission = exp(-m.nH * NH_UNIT * photoelectric_cross_section(E_rest))
     (1 - m.covering) + m.covering * transmission
@@ -107,7 +107,7 @@ Base.@kwdef struct ZGaussianLine1D{K <: Real, E <: Real, S <: Real, Z <: Real} <
     z::Z = 0.0
 end
 
-AstroFit.render(m::ZGaussianLine1D, E::Number) = begin
+AstroFit.evaluate(m::ZGaussianLine1D, E::Number) = begin
     u = (E * (1 + m.z) - m.line_energy) / m.sigma
     m.norm * (1 + m.z) / (m.sigma * sqrt(2pi)) * exp(-u^2 / 2)
 end

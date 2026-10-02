@@ -9,14 +9,14 @@ Base.@kwdef struct Gaussian1D{A <: Real, M <: Real, S <: Real} <: AbstractModel{
     sigma::S = 1.0
 end
 
-render(m::Gaussian1D, x::Number) = m.amplitude * exp(-((x - m.mean) / m.sigma)^2 / 2)
+evaluate(m::Gaussian1D, x::Number) = m.amplitude * exp(-((x - m.mean) / m.sigma)^2 / 2)
 
 
 Base.@kwdef struct Const1D{T <: Real} <: AbstractModel{1, 1}
     value::T = 0.0
 end
 
-render(m::Const1D, ::Number) = m.value
+evaluate(m::Const1D, ::Number) = m.value
 
 
 Base.@kwdef struct Linear1D{S <: Real, I <: Real} <: AbstractModel{1, 1}
@@ -24,7 +24,7 @@ Base.@kwdef struct Linear1D{S <: Real, I <: Real} <: AbstractModel{1, 1}
     intercept::I = 0.0
 end
 
-render(m::Linear1D, x::Number) = m.slope * x + m.intercept
+evaluate(m::Linear1D, x::Number) = m.slope * x + m.intercept
 
 
 Base.@kwdef struct Lorentzian1D{A <: Real, M <: Real, G <: Real} <: AbstractModel{1, 1}
@@ -33,7 +33,7 @@ Base.@kwdef struct Lorentzian1D{A <: Real, M <: Real, G <: Real} <: AbstractMode
     gamma::G = 1.0
 end
 
-render(m::Lorentzian1D, x::Number) = m.amplitude / (1 + ((x - m.mean) / m.gamma)^2)
+evaluate(m::Lorentzian1D, x::Number) = m.amplitude / (1 + ((x - m.mean) / m.gamma)^2)
 
 
 # ponytail: Thompson et al. 1987 pseudo-Voigt, no SpecialFunctions dep
@@ -58,7 +58,7 @@ struct Voigt1D{A <: Real, M <: Real, S <: Real, G <: Real, C} <: AbstractModel{1
 end
 Voigt1D(; amplitude = 1.0, mean = 0.0, sigma = 1.0, gamma = 1.0) = Voigt1D(amplitude, mean, sigma, gamma)
 
-function render(m::Voigt1D, x::Number)
+function evaluate(m::Voigt1D, x::Number)
     (; f, η) = m._cache_
     u = 2(x - m.mean) / f
     return m.amplitude * (η / (1 + u^2) + (1 - η) * exp(-log(2) * u^2))
@@ -71,7 +71,7 @@ Base.@kwdef struct PowerLaw1D{N <: Real, X <: Real, I <: Real} <: AbstractModel{
     index::I = 1.0
 end
 
-render(m::PowerLaw1D, x::Number) = m.norm * (x / m.x_ref)^(-m.index)
+evaluate(m::PowerLaw1D, x::Number) = m.norm * (x / m.x_ref)^(-m.index)
 
 
 Base.@kwdef struct BlackBody1D{A <: Real, T <: Real} <: AbstractModel{1, 1}
@@ -79,7 +79,7 @@ Base.@kwdef struct BlackBody1D{A <: Real, T <: Real} <: AbstractModel{1, 1}
     temperature::T = 1.0
 end
 
-render(m::BlackBody1D, x::Number) = m.amplitude * x^3 / (exp(x / m.temperature) - 1)
+evaluate(m::BlackBody1D, x::Number) = m.amplitude * x^3 / (exp(x / m.temperature) - 1)
 
 
 Base.@kwdef struct BrokenPowerLaw1D{N <: Real, X <: Real, I1 <: Real, I2 <: Real} <: AbstractModel{1, 1}
@@ -89,7 +89,7 @@ Base.@kwdef struct BrokenPowerLaw1D{N <: Real, X <: Real, I1 <: Real, I2 <: Real
     index2::I2 = 2.0
 end
 
-render(m::BrokenPowerLaw1D, x::Number) =
+evaluate(m::BrokenPowerLaw1D, x::Number) =
     m.norm * (x / m.x_break)^(x <= m.x_break ? -m.index1 : -m.index2)
 
 
@@ -98,7 +98,7 @@ Base.@kwdef struct Exponential1D{A <: Real, T <: Real} <: AbstractModel{1, 1}
     tau::T = 1.0
 end
 
-render(m::Exponential1D, x::Number) = m.amplitude * exp(-x / m.tau)
+evaluate(m::Exponential1D, x::Number) = m.amplitude * exp(-x / m.tau)
 
 
 # Coordinate-only transform: no amplitude, just warps x before an inner model
@@ -108,4 +108,4 @@ Base.@kwdef struct Redshift1D{T <: Real} <: AbstractModel{1, 1}
     z::T = 0.0
 end
 
-render(m::Redshift1D, x::Number) = x / (1 + m.z)
+evaluate(m::Redshift1D, x::Number) = x / (1 + m.z)

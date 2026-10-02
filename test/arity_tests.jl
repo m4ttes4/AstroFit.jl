@@ -37,5 +37,11 @@ end
 
 @testitem "no method ambiguities" tags = [:core] begin
     using AstroFit, Test
-    @test isempty(Test.detect_ambiguities(AstroFit))
+
+    # An author's untyped evaluate lives on a different function from render's
+    # methods, so it cannot make them ambiguous. detect_ambiguities only looks at
+    # methods defined in the modules it is given, hence both.
+    struct Loose <: AbstractModel{1, 1} end
+    AstroFit.evaluate(::Loose, x) = x
+    @test isempty(Test.detect_ambiguities(AstroFit, @__MODULE__))
 end

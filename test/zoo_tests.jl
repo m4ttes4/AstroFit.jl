@@ -110,7 +110,7 @@ end
         sigma_y::T
     end
 
-    AstroFit.render(m::Gaussian2D, x::Number, y::Number) =
+    AstroFit.evaluate(m::Gaussian2D, (x, y)::NTuple{2, Number}) =
         m.amplitude * exp(
         -0.5 * (
             ((x - m.x0) / m.sigma_x)^2 +
@@ -134,14 +134,12 @@ end
     end
 
     @test nfree(scene) == 10
-    @test render(scene, 1.0, -2.0) ≈ 4.0
-    @test render(scene, 4.0, -2.0) < render(scene, 1.0, -2.0)
+    @test render(scene, (1.0, -2.0)) ≈ 4.0
+    @test render(scene, (4.0, -2.0)) < render(scene, (1.0, -2.0))
 
-    x = [1.0 2.0; 3.0 4.0]
-    y = fill(-2.0, size(x))
-    out = similar(x)
-    @test render!(out, scene, x, y) === out
-    @test out ≈ render(scene, x, y)
+    # along y = y0 only the x widths matter: bulge σx = 2, disk σx = 5
+    xs = [1.0, 2.0, 3.0, 4.0]
+    @test render(scene, [(x, -2.0) for x in xs]) ≈ @. 3exp(-((xs - 1) / 2)^2 / 2) + exp(-((xs - 1) / 5)^2 / 2)
 end
 
 @testitem "zoo models with a _cache_ differentiate through withparams" tags = [:zoo] begin
@@ -164,6 +162,6 @@ end
         s
     end
     @fix sersic.s.q
-    fs(p) = render(withparams(sersic, p), 0.9, 0.4)
+    fs(p) = render(withparams(sersic, p), (0.9, 0.4))
     @test ForwardDiff.gradient(fs, params(sersic)) ≈ fd(fs, params(sersic)) rtol = 1.0e-6
 end

@@ -8,29 +8,10 @@ let
         c = Const1D(value = 0.3)
         g + c
     end
-    convolved = @model begin
-        g = Gaussian1D(amplitude = 2.0, mean = 0.1, sigma = 1.2)
-        k = GaussianPSF(sigma = 1.4)
-        c = Const1D(value = 0.3)
-        (g |> k) + c
-    end
-    chained = @model begin
-        g = Gaussian1D()
-        k1 = GaussianPSF(sigma = 1.4)
-        k2 = GaussianPSF(sigma = 1.4)
-        g |> k1 |> k2
-    end
-    transformed = @model begin
-        g = Gaussian1D()
-        k = GaussianPSF(sigma = 1.4)
-        t = Linear1D(slope = 2.0, intercept = 1.0)
-        g |> k |> t
-    end
     for n in (512, 4096)
         xs = collect(range(-5.0, 5.0; length = n))
         out = similar(xs)
-        for (name, m) in (("pointwise", pointwise), ("convolved", convolved),
-                ("chained", chained), ("transformed", transformed))
+        for (name, m) in (("pointwise", pointwise),)
             group = SUITE["mixed"]["$name/$n"] = BenchmarkGroup()
             f = ObjectiveFunction(m, xs, render(m, xs))
             p = AstroFit.params(m)

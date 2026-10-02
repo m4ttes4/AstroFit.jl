@@ -30,7 +30,7 @@ Base.@kwdef struct RedshiftAxis1D{T <: Real} <: AbstractModel{1, 1}
     z::T = 0.0
 end
 
-AstroFit.render(m::RedshiftAxis1D, lambda::Number) = lambda / (1 + m.z)
+AstroFit.evaluate(m::RedshiftAxis1D, lambda::Number) = lambda / (1 + m.z)
 
 Base.@kwdef struct DustScreen1D{A, B, C} <: AbstractModel{1, 1}
     a_v::A = 0.0
@@ -39,7 +39,7 @@ Base.@kwdef struct DustScreen1D{A, B, C} <: AbstractModel{1, 1}
 end
 
 # Multiplicative dust screen: power-law attenuation, stronger in the blue.
-AstroFit.render(m::DustScreen1D, lambda::Number) =
+AstroFit.evaluate(m::DustScreen1D, lambda::Number) =
     exp(-m.a_v * (lambda / m.lambda_ref)^(-m.slope))
 
 Base.@kwdef struct BalmerBreak1D{J <: Real, W <: Real, L <: Real} <: AbstractModel{1, 1}
@@ -50,7 +50,7 @@ end
 
 # Smooth step: 1 redward of the break, `jump` blueward, blended over `width`.
 # Applied to the stellar continuum only -- the AGN power law has no break.
-AstroFit.render(m::BalmerBreak1D, lambda::Number) =
+AstroFit.evaluate(m::BalmerBreak1D, lambda::Number) =
     m.jump + (1 - m.jump) / (1 + exp(-(lambda - m.lambda_break) / m.width))
 
 function galaxy_spectrum_model(;

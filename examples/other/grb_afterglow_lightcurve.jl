@@ -71,13 +71,11 @@ end
 # mid-fit even when no observed bin lands exactly there.
 poisson_ll_term(λ, k) = k == 0 ? -λ : logpdf(Poisson(λ), k)
 
-# Same two-method shape as AstroFit's own `chi2(model, coords, y, err)` /
-# `chi2(f::ObjectiveFunction, p)` (src/fit/loss.jl).
-poisson_loglike(model, coords, y) = begin
-    ts = coords[1]
-    sum(i -> poisson_ll_term(render(model, ts[i]), y[i]), eachindex(y))
+# Same shape as AstroFit's own `chi2(f::ObjectiveFunction, p)` (src/fit/loss.jl).
+poisson_loglike(f::ObjectiveFunction, p) = begin
+    m = withparams(f.cm, p)
+    sum(i -> poisson_ll_term(render(m, f.points[i]), f.y[i]), eachindex(f.y))
 end
-poisson_loglike(f::ObjectiveFunction, p) = poisson_loglike(withparams(f.cm, p), f.coords, f.y)
 
 # Optimization.jl minimizes — negate the log-likelihood to fit.
 prob = OptimizationProblem(cm, t, counts; statistic = (f, p) -> -poisson_loglike(f, p))
