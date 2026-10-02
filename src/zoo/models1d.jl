@@ -1,9 +1,7 @@
 # --- 1D model library ---
 #
-# Only Voigt1D carries a hand-written `render!`: it has constants worth hoisting out
-# of the loop. Everywhere else the scalar formula has nothing to share between
-# points, so the generic broadcasting `render!` (render.jl) compiles to the same
-# loop — a per-model copy would only be the formula written twice.
+# Voigt1D keeps its parameter-only constants in `_cache_`, computed once by its
+# positional constructor; the other models have nothing to share between points.
 
 Base.@kwdef struct Gaussian1D{A <: Real, M <: Real, S <: Real} <: AbstractModel
     amplitude::A = 1.0
@@ -39,45 +37,31 @@ render(m::Lorentzian1D, x::Number) = m.amplitude / (1 + ((x - m.mean) / m.gamma)
 
 
 # ponytail: Thompson et al. 1987 pseudo-Voigt, no SpecialFunctions dep
-Base.@kwdef struct Voigt1D{A <: Real, M <: Real, S <: Real, G <: Real} <: AbstractModel
-    amplitude::A = 1.0
-    mean::M = 0.0
-    sigma::S = 1.0
-    gamma::G = 1.0
+struct Voigt1D{A <: Real, M <: Real, S <: Real, G <: Real, C} <: AbstractModel
+    amplitude::A
+    mean::M
+    sigma::S
+    gamma::G
+    _cache_::C
+    # The profile width `f` and the mixing `η` depend only on the parameters.
+    function Voigt1D(amplitude::A, mean::M, sigma::S, gamma::G) where {A <: Real, M <: Real, S <: Real, G <: Real}
+        fg = 2 * sigma * sqrt(2 * log(2))
+        fl = 2 * gamma
+        f = (
+            fg^5 + 2.69269fg^4 * fl + 2.42843fg^3 * fl^2 +
+                4.47163fg^2 * fl^3 + 0.07842fg * fl^4 + fl^5
+        )^0.2
+        r = fl / f
+        c = (f = f, η = 1.36603r - 0.47719r^2 + 0.11116r^3)
+        return new{A, M, S, G, typeof(c)}(amplitude, mean, sigma, gamma, c)
+    end
 end
+Voigt1D(; amplitude = 1.0, mean = 0.0, sigma = 1.0, gamma = 1.0) = Voigt1D(amplitude, mean, sigma, gamma)
 
 function render(m::Voigt1D, x::Number)
-    fg = 2 * m.sigma * sqrt(2 * log(2))
-    fl = 2 * m.gamma
-    f = (
-        fg^5 + 2.69269fg^4 * fl + 2.42843fg^3 * fl^2 +
-            4.47163fg^2 * fl^3 + 0.07842fg * fl^4 + fl^5
-    )^0.2
-    r = fl / f
-    η = 1.36603r - 0.47719r^2 + 0.11116r^3
+    (; f, η) = m._cache_
     u = 2(x - m.mean) / f
     return m.amplitude * (η / (1 + u^2) + (1 - η) * exp(-log(2) * u^2))
-end
-
-# The profile width `f` and the mixing `η` depend only on the parameters, so they
-# come out of the loop — this is the one 1D model where that is worth a method.
-function render!(out::AbstractArray, m::Voigt1D, xs::AbstractArray)
-    xs isa AbstractMatrix && return _copyrender!(out, _eval(m, xs))
-    _checkrendercoords(out, xs)
-    fg = 2 * m.sigma * sqrt(2 * log(2))
-    fl = 2 * m.gamma
-    f = (
-        fg^5 + 2.69269fg^4 * fl + 2.42843fg^3 * fl^2 +
-            4.47163fg^2 * fl^3 + 0.07842fg * fl^4 + fl^5
-    )^0.2
-    r = fl / f
-    η = 1.36603r - 0.47719r^2 + 0.11116r^3
-    ln2 = log(2)
-    @inbounds for i in eachindex(out, xs)
-        u = 2(xs[i] - m.mean) / f
-        out[i] = m.amplitude * (η / (1 + u^2) + (1 - η) * exp(-ln2 * u^2))
-    end
-    return out
 end
 
 

@@ -82,7 +82,6 @@ render(m::Union{_COMPOUND, Leaf}, xs::_RenderInput...) = Base.Broadcast.material
     axes(out) == expected || throw(DimensionMismatch("render destination axes $(axes(out)) do not match prediction axes $expected"))
     return nothing
 end
-@inline _checkrendercoords(out, xs...) = _checkrenderaxes(out, Base.Broadcast.combine_axes(xs...))
 @inline function _copyrender!(out, values)
     _checkrenderaxes(out, axes(values))
     out .= values

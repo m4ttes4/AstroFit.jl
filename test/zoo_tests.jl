@@ -143,3 +143,27 @@ end
     @test render!(out, scene, x, y) === out
     @test out ≈ render(scene, x, y)
 end
+
+@testitem "zoo models with a _cache_ differentiate through withparams" tags = [:zoo] begin
+    using AstroFit, ForwardDiff
+
+    # Central differences are an independent reference: error ~h² ≈ 1e-12, rounding ~eps/h ≈ 1e-10.
+    e(i, n) = (1:n) .== i
+    fd(f, p; h = 1.0e-6) = [(f(p .+ h .* e(i, length(p))) - f(p .- h .* e(i, length(p)))) / 2h for i in eachindex(p)]
+
+    voigt = @model begin
+        v = Voigt1D(amplitude = 2.0, mean = 0.1, sigma = 0.8, gamma = 0.5)
+        v
+    end
+    fv(p) = render(withparams(voigt, p), 0.7)
+    @test ForwardDiff.gradient(fv, params(voigt)) ≈ fd(fv, params(voigt)) rtol = 1.0e-6
+
+    # q fixed to an Int: the cache mixes a fixed Int, Float64 and dual fields (ADR 0005).
+    sersic = @model begin
+        s = Sersic2D(amplitude = 2.0, x0 = 0.1, y0 = -0.2, r_eff = 1.5, n = 2.0, q = 1, theta = 0.3)
+        s
+    end
+    @fix sersic.s.q
+    fs(p) = render(withparams(sersic, p), 0.9, 0.4)
+    @test ForwardDiff.gradient(fs, params(sersic)) ≈ fd(fs, params(sersic)) rtol = 1.0e-6
+end
