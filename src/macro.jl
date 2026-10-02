@@ -84,18 +84,28 @@ function _mergepriors(priors, ::Val{prefix}, cm::CompiledModel) where {prefix}
     return priors === nothing ? renamed : (priors..., renamed...)
 end
 
+# A model may end with a `_cache_` field: constants derived from its parameters by its
+# positional constructor. It is not a parameter, so it gets no constraint and no slot.
+function _nparams(::Type{M}) where {M <: AbstractModel}
+    i = findfirst(==(:_cache_), fieldnames(M))
+    i === nothing && return fieldcount(M)
+    i == fieldcount(M) || throw(ArgumentError("$(nameof(M)): `_cache_` must be the last field"))
+    return i - 1
+end
+
 """
     _defaults(m) -> NTuple{N, Free}
 
-Return a tuple of [`Free`](@ref) constraints, one per field of `m`.
+Return a tuple of [`Free`](@ref) constraints, one per parameter of `m` (every field
+except a trailing `_cache_`).
 """
-_defaults(m) = ntuple(_ -> Free(), fieldcount(typeof(m)))
+_defaults(m) = ntuple(_ -> Free(), _nparams(typeof(m)))
 
 # Kernels are the exception: their fields default Fixed, because a kernel is
 # normally a known calibration input, and a free integer field (a width in
 # samples) breaks ForwardDiff outright. Fit one with an explicit `@free`.
 # See docs/adr/0004-kernel-fields-fixed-by-default.md.
-_defaults(m::AbstractKernel) = ntuple(i -> Fixed(getfield(m, i)), fieldcount(typeof(m)))
+_defaults(m::AbstractKernel) = ntuple(i -> Fixed(getfield(m, i)), _nparams(typeof(m)))
 
 """
     _compiled(tree) -> CompiledModel

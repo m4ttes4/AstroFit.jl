@@ -102,7 +102,7 @@ function _tree(io, node, prefix, islast, isroot = false, priors = Dict{Symbol, A
     child = isroot ? prefix : prefix * (islast ? "   " : "│  ")
     return if node isa Leaf
         _leafline(io, node); println(io)
-        fields = fieldnames(typeof(node.model))
+        fields = fieldnames(typeof(node.model))[eachindex(node.constraints)]  # skip `_cache_`
         isempty(fields) && return
         lname = _leafname(node)
         width = maximum(length(string(f)) for f in fields)

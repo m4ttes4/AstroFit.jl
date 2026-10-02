@@ -72,9 +72,11 @@ function _treeexpr(T, acc, slots)
         name, M, C = T.parameters
         fields = (
             _fieldexpr(fieldtypes(C)[i], name, fieldnames(M)[i], i, acc, slots)
-                for i in 1:fieldcount(M)
+                for i in 1:fieldcount(C)  # one per constraint: a trailing `_cache_` is not a parameter
         )
-        :(Leaf{$(QuoteNode(name))}($(constructorof(M))($(fields...)), ($acc).constraints))
+        # Emit the constructorof call (not its value): the generator runs in AstroFit's world
+        # age and would miss a user overload defined after loading.
+        :(Leaf{$(QuoteNode(name))}(constructorof($M)($(fields...)), ($acc).constraints))
     else
         L, R = T.parameters
         :(
