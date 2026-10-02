@@ -288,7 +288,7 @@ end
             n -> CartesianIndices((n, n)),
             n -> (c = collect(range(0.0, 10.0; length = n)); Coords(c, c)),
         )
-        f1, f2 = (ObjectiveFunction(cm2, mk(n), render(cm2, mk(n))) for n in (10, 60))
+        local f1, f2 = (ObjectiveFunction(cm2, mk(n), render(cm2, mk(n))) for n in (10, 60))
         f1(v); f2(v)
         @test @allocated(f1(v)) == @allocated(f2(v))
         @test @allocated(f2(v)) < 512

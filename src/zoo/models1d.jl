@@ -2,6 +2,10 @@
 #
 # Voigt1D keeps its parameter-only constants in `_cache_`, computed once by its
 # positional constructor; the other models have nothing to share between points.
+#
+# The non-trivial evaluates are `@inline`: with ForwardDiff duals their bodies exceed
+# the inlining threshold, and the call left in the χ² loop measured the Hα + [NII]
+# gradient at 1.17x or 1.38x of handwritten depending on the run (0.79x inlined).
 
 Base.@kwdef struct Gaussian1D{A <: Real, M <: Real, S <: Real} <: AbstractModel{1, 1}
     amplitude::A = 1.0
@@ -9,7 +13,7 @@ Base.@kwdef struct Gaussian1D{A <: Real, M <: Real, S <: Real} <: AbstractModel{
     sigma::S = 1.0
 end
 
-evaluate(m::Gaussian1D, x::Number) = m.amplitude * exp(-((x - m.mean) / m.sigma)^2 / 2)
+@inline evaluate(m::Gaussian1D, x::Number) = m.amplitude * exp(-((x - m.mean) / m.sigma)^2 / 2)
 
 
 Base.@kwdef struct Const1D{T <: Real} <: AbstractModel{1, 1}
@@ -33,7 +37,7 @@ Base.@kwdef struct Lorentzian1D{A <: Real, M <: Real, G <: Real} <: AbstractMode
     gamma::G = 1.0
 end
 
-evaluate(m::Lorentzian1D, x::Number) = m.amplitude / (1 + ((x - m.mean) / m.gamma)^2)
+@inline evaluate(m::Lorentzian1D, x::Number) = m.amplitude / (1 + ((x - m.mean) / m.gamma)^2)
 
 
 # ponytail: Thompson et al. 1987 pseudo-Voigt, no SpecialFunctions dep
@@ -58,7 +62,7 @@ struct Voigt1D{A <: Real, M <: Real, S <: Real, G <: Real, C} <: AbstractModel{1
 end
 Voigt1D(; amplitude = 1.0, mean = 0.0, sigma = 1.0, gamma = 1.0) = Voigt1D(amplitude, mean, sigma, gamma)
 
-function evaluate(m::Voigt1D, x::Number)
+@inline function evaluate(m::Voigt1D, x::Number)
     (; f, η) = m._cache_
     u = 2(x - m.mean) / f
     return m.amplitude * (η / (1 + u^2) + (1 - η) * exp(-log(2) * u^2))
@@ -71,7 +75,7 @@ Base.@kwdef struct PowerLaw1D{N <: Real, X <: Real, I <: Real} <: AbstractModel{
     index::I = 1.0
 end
 
-evaluate(m::PowerLaw1D, x::Number) = m.norm * (x / m.x_ref)^(-m.index)
+@inline evaluate(m::PowerLaw1D, x::Number) = m.norm * (x / m.x_ref)^(-m.index)
 
 
 Base.@kwdef struct BlackBody1D{A <: Real, T <: Real} <: AbstractModel{1, 1}
@@ -79,7 +83,7 @@ Base.@kwdef struct BlackBody1D{A <: Real, T <: Real} <: AbstractModel{1, 1}
     temperature::T = 1.0
 end
 
-evaluate(m::BlackBody1D, x::Number) = m.amplitude * x^3 / (exp(x / m.temperature) - 1)
+@inline evaluate(m::BlackBody1D, x::Number) = m.amplitude * x^3 / (exp(x / m.temperature) - 1)
 
 
 Base.@kwdef struct BrokenPowerLaw1D{N <: Real, X <: Real, I1 <: Real, I2 <: Real} <: AbstractModel{1, 1}
@@ -89,7 +93,7 @@ Base.@kwdef struct BrokenPowerLaw1D{N <: Real, X <: Real, I1 <: Real, I2 <: Real
     index2::I2 = 2.0
 end
 
-evaluate(m::BrokenPowerLaw1D, x::Number) =
+@inline evaluate(m::BrokenPowerLaw1D, x::Number) =
     m.norm * (x / m.x_break)^(x <= m.x_break ? -m.index1 : -m.index2)
 
 
@@ -98,7 +102,7 @@ Base.@kwdef struct Exponential1D{A <: Real, T <: Real} <: AbstractModel{1, 1}
     tau::T = 1.0
 end
 
-evaluate(m::Exponential1D, x::Number) = m.amplitude * exp(-x / m.tau)
+@inline evaluate(m::Exponential1D, x::Number) = m.amplitude * exp(-x / m.tau)
 
 
 # Coordinate-only transform: no amplitude, just warps x before an inner model

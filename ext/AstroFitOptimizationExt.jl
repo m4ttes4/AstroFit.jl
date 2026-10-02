@@ -17,10 +17,10 @@ using ForwardDiff
 _fullchunk(n) = AutoForwardDiff(chunksize = n)
 
 function OptimizationFunction(
-        cm::AstroFit.CompiledModel, x, y, err = nothing;
+        cm::AstroFit.CompiledModel, points, y, err = nothing;
         statistic = AstroFit.chi2, adtype = _fullchunk(AstroFit.nfree(cm)), kwargs...
     )
-    f = AstroFit.ObjectiveFunction(cm, x, y, err; statistic)
+    f = AstroFit.ObjectiveFunction(cm, points, y, err; statistic)
     return OptimizationFunction(f, adtype; kwargs...)
 end
 
@@ -31,10 +31,10 @@ function OptimizationFunction(
 end
 
 function OptimizationProblem(
-        cm::AstroFit.CompiledModel, x, y, err = nothing;
+        cm::AstroFit.CompiledModel, points, y, err = nothing;
         statistic = AstroFit.chi2, adtype = _fullchunk(AstroFit.nfree(cm)), kwargs...
     )
-    optf = AstroFit.ObjectiveFunction(cm, x, y, err; statistic)
+    optf = AstroFit.ObjectiveFunction(cm, points, y, err; statistic)
     u0 = params(cm)
     lb, ub = optf.lower, optf.upper
 
