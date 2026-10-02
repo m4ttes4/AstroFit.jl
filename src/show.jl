@@ -12,6 +12,13 @@ _opsym(::Quotient) = "/"
 _opsym(::Pipe) = "|>"
 
 _leafname(::Leaf{n}) where {n} = n
+
+# The name an arity error shows for each side: a leaf by the name the user gave it in
+# @model, a compound node by its formula, a bare model by its type.
+_label(m::AbstractModel) = string(nameof(typeof(m)))
+_label(l::Leaf) = string(_leafname(l))
+_label(n::_COMPOUND) = "($(_label(n.left)) $(_opsym(n)) $(_label(n.right)))"
+
 _fmt(v::AbstractFloat) = string(round(v; sigdigits = 6))
 _fmt(v::AbstractArray) = summary(v)   # "101×101 Matrix{Float64}", not the whole dump
 _fmt(v) = string(v)

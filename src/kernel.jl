@@ -41,4 +41,4 @@ Composition follows ordinary model semantics: `model |> psf` convolves, and the
 result composes further — `(model |> psf) + continuum`, `(model |> psf) * t`,
 `model |> psf1 |> psf2`.
 """
-abstract type AbstractKernel <: AbstractModel end
+abstract type AbstractKernel{I, O} <: AbstractModel{I, O} end

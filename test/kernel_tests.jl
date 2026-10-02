@@ -3,7 +3,7 @@
 
     # A kernel is written like any other model — a struct plus one render method.
     # It defines the ARRAY render instead of the scalar one.
-    struct ReverseKernel <: AbstractKernel end
+    struct ReverseKernel <: AbstractKernel{1, 1} end
     AstroFit.render(::ReverseKernel, ys::AbstractVector) = reverse(ys)
 
     k = ReverseKernel()
@@ -24,7 +24,7 @@ end
 @testitem "kernel: composes in any order with model semantics" tags = [:kernel] begin
     using AstroFit
 
-    struct DoubleKernel <: AbstractKernel end
+    struct DoubleKernel <: AbstractKernel{1, 1} end
     AstroFit.render(::DoubleKernel, ys::AbstractVector) = 2 .* ys
 
     x = collect(-2.0:0.5:2.0)
@@ -199,7 +199,7 @@ end
 @testitem "kernel: mis-sized kernel output is caught, not silently misaligned" tags = [:kernel] begin
     using AstroFit
 
-    struct TruncKernel <: AbstractKernel end
+    struct TruncKernel <: AbstractKernel{1, 1} end
     AstroFit.render(::TruncKernel, ys::AbstractVector) = ys[1:(end - 1)]
 
     cm = @model begin
@@ -389,7 +389,7 @@ end
 
     # A measured PSF: the kernel IS data, not a parametric shape. The struct
     # therefore holds an array, and a scalar the user may want to fit.
-    struct ScaledPSF{V <: AbstractVector, T <: Real} <: AbstractKernel
+    struct ScaledPSF{V <: AbstractVector, T <: Real} <: AbstractKernel{1, 1}
         kernel::V
         scale::T
     end
@@ -452,7 +452,7 @@ end
     using AstroFit
     using ForwardDiff
 
-    struct ImagePSF{M <: AbstractMatrix} <: AbstractKernel
+    struct ImagePSF{M <: AbstractMatrix} <: AbstractKernel{1, 1}
         psf::M
     end
     function AstroFit.render(k::ImagePSF, img::AbstractMatrix)
@@ -474,7 +474,7 @@ end
         return out
     end
 
-    struct Gauss2D{T <: Real} <: AbstractModel
+    struct Gauss2D{T <: Real} <: AbstractModel{2, 1}
         amp::T
         x0::T
         y0::T
@@ -515,7 +515,7 @@ end
     using ForwardDiff
 
     # An edge policy is a Symbol: nothing to promote against a number.
-    struct EdgePSF{T <: Real} <: AbstractKernel
+    struct EdgePSF{T <: Real} <: AbstractKernel{1, 1}
         sigma::T
         edge::Symbol
     end
@@ -535,7 +535,7 @@ end
 
     # A concrete Int beside a parametric Float: the Int must NOT be promoted,
     # or the constructor stops matching (and under AD it would become a Dual).
-    struct IntPSF{T <: Real} <: AbstractKernel
+    struct IntPSF{T <: Real} <: AbstractKernel{1, 1}
         halfwidth::Int
         sigma::T
     end
@@ -562,7 +562,7 @@ end
 
     # Each field keeps its own type parameter, so `<: Real` (not `<: AbstractFloat`) is
     # the bound that admits a Dual — and a Dual of a Dual, which second-order AD produces.
-    struct MixPSF{S <: Real, C <: Real} <: AbstractKernel
+    struct MixPSF{S <: Real, C <: Real} <: AbstractKernel{1, 1}
         sigma::S
         scale::C
         halfwidth::Int
@@ -591,7 +591,7 @@ end
 
     # Every field is its own type parameter or its own concrete type; reconstruction
     # passes each one through untouched, whatever it is.
-    struct BigPSF{S <: Real, C <: Real, V <: AbstractVector, M <: AbstractMatrix, F} <: AbstractKernel
+    struct BigPSF{S <: Real, C <: Real, V <: AbstractVector, M <: AbstractMatrix, F} <: AbstractKernel{1, 1}
         sigma::S
         scale::C
         taps::V
@@ -658,7 +658,7 @@ end
 @testitem "kernel: array fields display compactly" tags = [:kernel] begin
     using AstroFit
 
-    struct ImagePSF{M <: AbstractMatrix} <: AstroFit.AbstractKernel
+    struct ImagePSF{M <: AbstractMatrix} <: AstroFit.AbstractKernel{1, 1}
         kernel::M
     end
     AstroFit.render(k::ImagePSF, img::AbstractMatrix) = img
@@ -677,7 +677,7 @@ end
     using AstroFit
 
     # 3×3 box blur, renormalized at the edges: matrix in, same-size matrix out.
-    struct BoxPSF2D{T <: Real} <: AbstractKernel
+    struct BoxPSF2D{T <: Real} <: AbstractKernel{1, 1}
         weight::T
     end
     function AstroFit.render(k::BoxPSF2D, img::AbstractMatrix)
@@ -722,7 +722,7 @@ end
 @testitem "kernel: a matrix template drives the whole pipeline" tags = [:kernel] begin
     using AstroFit
 
-    struct MeanPSF <: AbstractKernel end
+    struct MeanPSF <: AbstractKernel{1, 1} end
     function AstroFit.render(::MeanPSF, im::AbstractMatrix)
         ny, nx = size(im)
         out = similar(im)

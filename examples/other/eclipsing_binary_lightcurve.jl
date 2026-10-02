@@ -26,7 +26,7 @@ using Random
 #    conjunction) — without that gate, each star's occultation would
 #    incorrectly also dip at its *partner's* eclipse.
 # ---------------------------------------------------------------------------
-Base.@kwdef struct Occult1D{T <: Real} <: AbstractModel
+Base.@kwdef struct Occult1D{T <: Real} <: AbstractModel{1, 1}
     rp_rs::T = 0.1    # occulter/occulted radius ratio
     a_rs::T = 10.0    # scaled semi-major axis, a/R(this star)
     b::T = 0.3        # impact parameter, in units of R(this star)

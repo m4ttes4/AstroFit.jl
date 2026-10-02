@@ -25,13 +25,13 @@ const L_SII_B = 6716.44
 const L_SII_R = 6730.82
 const L_REF = 5500.0
 
-Base.@kwdef struct RedshiftAxis1D{T <: Real} <: AbstractModel
+Base.@kwdef struct RedshiftAxis1D{T <: Real} <: AbstractModel{1, 1}
     z::T = 0.0
 end
 
 AstroFit.render(m::RedshiftAxis1D, lambda::Number) = lambda / (1 + m.z)
 
-Base.@kwdef struct RedshiftFluxScale1D{T <: Real} <: AbstractModel
+Base.@kwdef struct RedshiftFluxScale1D{T <: Real} <: AbstractModel{1, 1}
     z::T = 0.0
 end
 

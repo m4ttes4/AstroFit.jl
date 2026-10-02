@@ -21,8 +21,8 @@ evalstyle(::Type{<:AbstractKernel}) = Domainwise()
 @inline _combine(::Pointwise, ::Pointwise) = Pointwise()
 @inline _combine(_, _) = Domainwise()
 evalstyle(::Type{N}) where {N <: _COMPOUND} =
-    _combine(evalstyle(N.parameters[1]), evalstyle(N.parameters[2]))
-evalstyle(::Type{Leaf{name, M, C}}) where {name, M, C} = evalstyle(M)
+    _combine(evalstyle(fieldtype(N, :left)), evalstyle(fieldtype(N, :right)))
+evalstyle(::Type{<:Leaf{name, I, O, M}}) where {name, I, O, M} = evalstyle(M)
 evalstyle(::Type{CompiledModel{T, P}}) where {T, P} = evalstyle(T)
 
 # `template` is true for external coordinates and false for upstream values.

@@ -16,7 +16,7 @@ end
 
 struct Gaussian2D{
         T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, C,
-    } <: AbstractModel
+    } <: AbstractModel{2, 1}
     amplitude::T1
     x0::T2
     y0::T3
@@ -44,7 +44,7 @@ end
 # ponytail: b_n via Ciotti & Bertin 1999 approximation, SpecialFunctions.jl if sub-percent needed
 struct Sersic2D{
         T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, T7 <: Real, C,
-    } <: AbstractModel
+    } <: AbstractModel{2, 1}
     amplitude::T1
     x0::T2
     y0::T3
@@ -76,7 +76,7 @@ end
 
 struct Moffat2D{
         T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, T7 <: Real, C,
-    } <: AbstractModel
+    } <: AbstractModel{2, 1}
     amplitude::T1
     x0::T2
     y0::T3
@@ -104,7 +104,7 @@ end
 
 struct Beta2D{
         T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, T7 <: Real, C,
-    } <: AbstractModel
+    } <: AbstractModel{2, 1}
     amplitude::T1
     x0::T2
     y0::T3

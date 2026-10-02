@@ -19,7 +19,7 @@ using Statistics
 # ---------------------------------------------------------------------------
 # 0. Circle-circle occultation model — identical to eclipsing_binary_lightcurve.jl
 # ---------------------------------------------------------------------------
-Base.@kwdef struct Occult1D{T <: Real} <: AbstractModel
+Base.@kwdef struct Occult1D{T <: Real} <: AbstractModel{1, 1}
     rp_rs::T = 0.1
     a_rs::T = 10.0
     b::T = 0.3

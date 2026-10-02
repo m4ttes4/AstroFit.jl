@@ -26,13 +26,13 @@ const L_SII_B = 6716.44
 const L_SII_R = 6730.82
 const L_REF = 5500.0
 
-Base.@kwdef struct RedshiftAxis1D{T <: Real} <: AbstractModel
+Base.@kwdef struct RedshiftAxis1D{T <: Real} <: AbstractModel{1, 1}
     z::T = 0.0
 end
 
 AstroFit.render(m::RedshiftAxis1D, lambda::Number) = lambda / (1 + m.z)
 
-Base.@kwdef struct DustScreen1D{A, B, C} <: AbstractModel
+Base.@kwdef struct DustScreen1D{A, B, C} <: AbstractModel{1, 1}
     a_v::A = 0.0
     lambda_ref::B = L_REF
     slope::C = 1.0
@@ -42,7 +42,7 @@ end
 AstroFit.render(m::DustScreen1D, lambda::Number) =
     exp(-m.a_v * (lambda / m.lambda_ref)^(-m.slope))
 
-Base.@kwdef struct BalmerBreak1D{J <: Real, W <: Real, L <: Real} <: AbstractModel
+Base.@kwdef struct BalmerBreak1D{J <: Real, W <: Real, L <: Real} <: AbstractModel{1, 1}
     jump::J = 0.5
     width::W = 25.0
     lambda_break::L = L_BREAK

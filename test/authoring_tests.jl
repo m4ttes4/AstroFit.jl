@@ -377,7 +377,7 @@ end
 
     # In a block, ties are checked against the final state: the master is a kernel field
     # (Fixed by default) freed later in the same block.
-    struct Gain{G <: Real} <: AbstractKernel
+    struct Gain{G <: Real} <: AbstractKernel{1, 1}
         gain::G
     end
     ck = @model begin

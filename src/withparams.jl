@@ -11,7 +11,8 @@ This runs at compile time inside the `@generated withparams`.
 """
 function _slotmap!(map, T, counter)
     if T <: Leaf
-        name, M, C = T.parameters
+        name = T.parameters[1]
+        M, C = fieldtype(T, :model), fieldtype(T, :constraints)
         for (fname, Ci) in zip(fieldnames(M), fieldtypes(C))
             if Ci <: Free || Ci <: Bounded
                 counter[] += 1
@@ -19,9 +20,8 @@ function _slotmap!(map, T, counter)
             end
         end
     else  # compound node: left, right
-        L, R = T.parameters
-        _slotmap!(map, L, counter)
-        _slotmap!(map, R, counter)
+        _slotmap!(map, fieldtype(T, :left), counter)
+        _slotmap!(map, fieldtype(T, :right), counter)
     end
     return map
 end
@@ -69,7 +69,8 @@ leaf `constraints` carried into the rebuilt tree.
 """
 function _treeexpr(T, acc, slots)
     return if T <: Leaf
-        name, M, C = T.parameters
+        name = T.parameters[1]
+        M, C = fieldtype(T, :model), fieldtype(T, :constraints)
         fields = (
             _fieldexpr(fieldtypes(C)[i], name, fieldnames(M)[i], i, acc, slots)
                 for i in 1:fieldcount(C)  # one per constraint: a trailing `_cache_` is not a parameter
@@ -78,11 +79,10 @@ function _treeexpr(T, acc, slots)
         # age and would miss a user overload defined after loading.
         :(Leaf{$(QuoteNode(name))}(constructorof($M)($(fields...)), ($acc).constraints))
     else
-        L, R = T.parameters
         :(
             $(T.name.wrapper)(
-                $(_treeexpr(L, :(($acc).left), slots)),
-                $(_treeexpr(R, :(($acc).right), slots))
+                $(_treeexpr(fieldtype(T, :left), :(($acc).left), slots)),
+                $(_treeexpr(fieldtype(T, :right), :(($acc).right), slots))
             )
         )
     end

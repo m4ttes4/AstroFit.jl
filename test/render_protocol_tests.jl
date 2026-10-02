@@ -1,7 +1,7 @@
 @testitem "render protocol: array-native models are transparent through wrappers" tags = [:core, :render] begin
     using AstroFit, Test, ForwardDiff
 
-    struct ArrayScale{T} <: AbstractModel
+    struct ArrayScale{T} <: AbstractModel{1, 1}
         scale::T
     end
     AstroFit.evalstyle(::Type{<:ArrayScale}) = AstroFit.Domainwise()
@@ -40,7 +40,7 @@ end
 @testitem "render protocol: array-native coordinate models support flat and grid forms" tags = [:core, :render] begin
     using AstroFit, Test
 
-    struct ArrayPlane{T} <: AbstractModel
+    struct ArrayPlane{T} <: AbstractModel{2, 1}
         scale::T
     end
     AstroFit.evalstyle(::Type{<:ArrayPlane}) = Domainwise()
@@ -63,7 +63,7 @@ end
 @testitem "render protocol: kernels work in-place bare and wrapped" tags = [:kernel, :render] begin
     using AstroFit, Test
 
-    struct DoubleArray <: AbstractKernel end
+    struct DoubleArray <: AbstractKernel{1, 1} end
     AstroFit.render(::DoubleArray, xs::AbstractArray) = 2 .* xs
     cm = @model begin
         k = DoubleArray()
@@ -98,9 +98,9 @@ end
 @testitem "render protocol: matrix pipe outputs remain values" tags = [:kernel, :render] begin
     using AstroFit, Test
 
-    struct Plane <: AbstractModel end
+    struct Plane <: AbstractModel{2, 1} end
     AstroFit.render(::Plane, x::Number, y::Number) = x + 2y
-    struct DoubleImage <: AbstractKernel end
+    struct DoubleImage <: AbstractKernel{1, 1} end
     AstroFit.render(::DoubleImage, xs::AbstractMatrix) = 2 .* xs
     cm = @model begin
         source = Plane()
@@ -114,7 +114,7 @@ end
     @test render!(similar(expected), cm, col, row) == expected
     @test render(cm, zeros(3, 2)) == 6 .* ((1:3) .+ 2 .* reshape(1:2, 1, :)) .+ 1
     @test render!(zeros(3, 2), cm) == render(cm, zeros(3, 2))
-    @test_throws MethodError render((Plane() |> DoubleImage()) |> Plane(), col, row)
+    @test_throws "(Plane |> DoubleImage) produces 1 value(s) per point, Plane expects 2" (Plane() |> DoubleImage()) |> Plane()
     @test render(Plane(), col, 4.0) == col .+ 8
     @test render!(similar(col), Plane(), col, 4.0) == col .+ 8
 end
@@ -122,7 +122,7 @@ end
 @testitem "render protocol: reject kernel shape changes before broadcasting" tags = [:kernel, :render] begin
     using AstroFit, Test
 
-    struct SingletonKernel <: AbstractKernel end
+    struct SingletonKernel <: AbstractKernel{1, 1} end
     AstroFit.render(::SingletonKernel, xs::AbstractArray) = [sum(xs)]
     g = Gaussian1D()
     xs = [1.0, 2.0, 3.0]

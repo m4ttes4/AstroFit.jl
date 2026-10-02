@@ -34,7 +34,7 @@ render(cm, x)             # convolved profile
 
 See also: [`AbstractKernel`](@ref)
 """
-Base.@kwdef struct GaussianPSF{T <: Real} <: AbstractKernel
+Base.@kwdef struct GaussianPSF{T <: Real} <: AbstractKernel{1, 1}
     sigma::T
 end
 

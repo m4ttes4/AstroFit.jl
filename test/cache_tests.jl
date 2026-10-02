@@ -1,7 +1,7 @@
 @testitem "a `_cache_` field is derived state, not a parameter" tags = [:authoring] begin
     using AstroFit, ForwardDiff
 
-    struct Tilted{S <: Real, T <: Real, C} <: AstroFit.AbstractModel
+    struct Tilted{S <: Real, T <: Real, C} <: AstroFit.AbstractModel{1, 1}
         sigma::S
         theta::T
         _cache_::C
@@ -31,7 +31,7 @@
     g = ForwardDiff.gradient(p -> render(withparams(fixedθ, p), 3.0), [2.0])
     @test g[1] ≈ -cos(0.5) * 3.0 / 4.0
 
-    struct Misplaced{C, S <: Real} <: AstroFit.AbstractModel
+    struct Misplaced{C, S <: Real} <: AstroFit.AbstractModel{1, 1}
         _cache_::C
         sigma::S
     end
@@ -47,7 +47,7 @@ end
 @testitem "withparams honours a constructorof overload defined after loading" tags = [:authoring] begin
     using AstroFit
 
-    struct Mirrored{A <: Real} <: AstroFit.AbstractModel
+    struct Mirrored{A <: Real} <: AstroFit.AbstractModel{1, 1}
         amplitude::A
     end
     AstroFit.render(m::Mirrored, x::Number) = m.amplitude

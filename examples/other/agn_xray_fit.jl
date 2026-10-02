@@ -49,7 +49,7 @@ const SIGMA_1KEV = 3.0e-22   # cm^2 per H atom; smooth educational approximation
 
 photoelectric_cross_section(E) = SIGMA_1KEV * (E / 1.0)^(-3)
 
-Base.@kwdef struct PhAbs1D{N <: Real, Z <: Real} <: AbstractModel
+Base.@kwdef struct PhAbs1D{N <: Real, Z <: Real} <: AbstractModel{1, 1}
     nH::N = 1.0              # equivalent hydrogen column, 10^22 cm^-2
     z::Z = 0.0               # absorber redshift
 end
@@ -66,7 +66,7 @@ end
 #
 # K is the photon flux density at 1 keV in the source-frame convention used by
 # this example (photons keV^-1 cm^-2 s^-1).
-Base.@kwdef struct ZCutoffPowerLaw1D{N <: Real, I <: Real, C <: Real, Z <: Real} <: AbstractModel
+Base.@kwdef struct ZCutoffPowerLaw1D{N <: Real, I <: Real, C <: Real, Z <: Real} <: AbstractModel{1, 1}
     norm::N = 1.0
     index::I = 1.0           # photon index Gamma
     cutoff::C = 80.0         # source-frame e-folding energy, keV
@@ -80,7 +80,7 @@ end
 
 # Partial covering, following XSPEC zpcfabs:
 # M(E) = (1-f) + f exp[-N_H sigma(E(1+z))].
-Base.@kwdef struct ZPartialCovering1D{N <: Real, F <: Real, Z <: Real} <: AbstractModel
+Base.@kwdef struct ZPartialCovering1D{N <: Real, F <: Real, Z <: Real} <: AbstractModel{1, 1}
     nH::N = 1.0
     covering::F = 0.9
     z::Z = 0.0
@@ -100,7 +100,7 @@ end
 #
 #     A(E) ≈ K (1+z) / [sigma sqrt(2pi)]
 #            exp[-(E(1+z) - E_l)^2 / (2 sigma^2)].
-Base.@kwdef struct ZGaussianLine1D{K <: Real, E <: Real, S <: Real, Z <: Real} <: AbstractModel
+Base.@kwdef struct ZGaussianLine1D{K <: Real, E <: Real, S <: Real, Z <: Real} <: AbstractModel{1, 1}
     norm::K = 1.0e-5        # observed integrated photons cm^-2 s^-1
     line_energy::E = 6.4    # source-frame keV
     sigma::S = 0.1          # source-frame keV

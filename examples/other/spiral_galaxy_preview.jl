@@ -5,7 +5,7 @@ using AstroFit
 import AstroFit: render          # extend render for the inline model
 using CairoMakie
 
-Base.@kwdef struct SpiralArm2D{T <: Real} <: AbstractModel
+Base.@kwdef struct SpiralArm2D{T <: Real} <: AbstractModel{2, 1}
     amplitude::T = 1.0
     x0::T = 0.0
     y0::T = 0.0

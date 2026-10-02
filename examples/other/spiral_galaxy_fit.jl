@@ -33,7 +33,7 @@ using Random
 # The second exponential is a von-Mises-like ridge: it is in (0, 1], peaks at 1 on
 # the arm crest, is strictly positive and branch-free (AD-safe, no abs/min/max).
 # `r_in` softens the radius so √ and ln stay finite and differentiable at the centre.
-Base.@kwdef struct SpiralArm2D{T <: Real} <: AbstractModel
+Base.@kwdef struct SpiralArm2D{T <: Real} <: AbstractModel{2, 1}
     amplitude::T = 1.0    # peak brightness on the arm ridge
     x0::T = 0.0           # centre
     y0::T = 0.0

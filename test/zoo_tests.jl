@@ -102,7 +102,7 @@ end
 @testitem "zoo-style 2D line profiles render and constrain physical params" tags = [:zoo, :twod] begin
     using AstroFit
 
-    struct Gaussian2D{T <: Real} <: AbstractModel
+    struct Gaussian2D{T <: Real} <: AbstractModel{2, 1}
         amplitude::T
         x0::T
         y0::T

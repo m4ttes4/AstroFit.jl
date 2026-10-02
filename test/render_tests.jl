@@ -139,7 +139,7 @@ end
 @testitem "render!: generic fallback supports custom multi-coordinate models" tags = [:core, :render] begin
     using AstroFit
 
-    struct TestPlane2D{T <: Real} <: AbstractModel
+    struct TestPlane2D{T <: Real} <: AbstractModel{2, 1}
         a::T
         b::T
         c::T
