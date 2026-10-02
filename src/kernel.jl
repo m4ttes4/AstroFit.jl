@@ -13,6 +13,7 @@ end
 AstroFit.evaluate(k::Saturate, f::Number) = min(f, k.level)
 ```
 
-Operations on whole arrays (convolution, rebinning) are not supported yet.
+Operations on whole arrays (convolution, rebinning) are not supported yet: every
+model, kernels included, is evaluated one point at a time.
 """
 abstract type AbstractKernel{I, O} <: AbstractModel{I, O} end

@@ -1,3 +1,6 @@
+# Base has no indexable lazy product: `Iterators.product` is not an AbstractArray and
+# broadcasting over it collects the tuples first (16 bytes per pixel; a Coords is the
+# axes only).
 """
     Coords(x, y, zs...)
 
@@ -9,9 +12,6 @@ element `Coords(x, y)[i, j]` is the point `(x[i], y[j])`. Use it for physical ax
 Each axis keeps its own element type, and the axes are not copied: range axes stay
 ranges (about 20% slower to index than `collect`ed vectors).
 """
-# Base has no indexable lazy product: `Iterators.product` is not an AbstractArray and
-# broadcasting over it collects the tuples first (16 bytes per pixel; a Coords is the
-# axes only).
 struct Coords{T, N, A <: NTuple{N, AbstractVector}} <: AbstractArray{T, N}
     ax::A
     # Two or more axes: a 1D input is the vector itself.

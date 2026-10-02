@@ -6,6 +6,7 @@ The method a model author implements: the output of `m` at one point, a `Number`
 for a 1-input model and an `NTuple{I, Number}` otherwise. It returns a `Number`
 (`O = 1`) or an `NTuple{O, Number}`. Not exported: extend it as
 `AstroFit.evaluate(m::MyModel, x::Number) = …`. Users call [`render`](@ref).
+See [`AbstractModel`](@ref) for the full contract, including `_cache_`.
 """
 function evaluate end
 
@@ -13,10 +14,20 @@ function evaluate end
     render(m, x)
     render(m, A::AbstractArray)
 
-Evaluate model `m` at one point `x` (a `Number` for a 1-input model, an
-`NTuple{I, Number}` or a `CartesianIndex{I}` otherwise), or at every point of an
-array: a vector of numbers (1D), `CartesianIndices(img)`, `Coords(x, y, …)`, or any
-array of points. `out .= render.(m, A)` is the in-place form.
+Evaluate model `m` at one point `x`, or at every point of the array `A`.
+
+- A point is a `Number` for a 1-input model, and an `NTuple{I, Number}` or a
+  `CartesianIndex{I}` otherwise.
+- An array of points is a vector of numbers (1D), `CartesianIndices(img)`,
+  `Coords(x, y, …)` for physical axes, a masked `CartesianIndices(img)[mask]`, or any
+  array of tuples. The result has the shape of `A`.
+- Pixel `(i, j)` of `CartesianIndices(img)` is at coordinate `(i, j)`: the centre of
+  the first pixel is at 1, as in Julia and FITS.
+- A numeric matrix is not a set of points: pass `CartesianIndices(img)` for its pixels.
+- `out .= render.(m, A)` is the in-place form and allocates nothing.
+
+Each point is evaluated on its own, so operations that mix points (convolution with a
+PSF, rebinning) are not supported yet.
 """
 @inline function render(m::AbstractModel{1, O}, x::Number) where {O}
     y = evaluate(m, x)

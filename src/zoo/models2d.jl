@@ -14,6 +14,13 @@
     return xr^2 + yr^2 * inv_q2
 end
 
+"""
+    Gaussian2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, sigma = 1.0, q = 1.0, theta = 0.0)
+
+A `2 => 1` elliptical Gaussian: `amplitude * exp(-r^2 / (2 * sigma^2))`.
+`r` is the elliptical radius around `(x0, y0)`, with the major axis at angle
+`theta` from the x axis and axis ratio `q`.
+"""
 struct Gaussian2D{
         T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, C,
     } <: AbstractModel{2, 1}
@@ -42,6 +49,14 @@ end
 
 
 # ponytail: b_n via Ciotti & Bertin 1999 approximation, SpecialFunctions.jl if sub-percent needed
+"""
+    Sersic2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, r_eff = 1.0, n = 1.0, q = 1.0, theta = 0.0)
+
+A `2 => 1` Sérsic profile: `amplitude * exp(-b_n * ((r / r_eff)^(1 / n) - 1))`, with
+`b_n ≈ 2n - 1/3 + 4/(405n)`, so `amplitude` is the value at `r_eff`.
+`r` is the elliptical radius around `(x0, y0)`, with the major axis at angle
+`theta` from the x axis and axis ratio `q`.
+"""
 struct Sersic2D{
         T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, T7 <: Real, C,
     } <: AbstractModel{2, 1}
@@ -74,6 +89,13 @@ Sersic2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, r_eff = 1.0, n = 1.0, q = 1.0, t
 end
 
 
+"""
+    Moffat2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, alpha = 1.0, beta = 1.0, q = 1.0, theta = 0.0)
+
+A `2 => 1` Moffat profile: `amplitude * (1 + (r / alpha)^2)^(-beta)`.
+`r` is the elliptical radius around `(x0, y0)`, with the major axis at angle
+`theta` from the x axis and axis ratio `q`.
+"""
 struct Moffat2D{
         T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, T7 <: Real, C,
     } <: AbstractModel{2, 1}
@@ -102,6 +124,14 @@ Moffat2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, alpha = 1.0, beta = 1.0, q = 1.0
 end
 
 
+"""
+    Beta2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, r_core = 1.0, beta = 0.67, q = 1.0, theta = 0.0)
+
+A `2 => 1` beta model (e.g. cluster X-ray emission):
+`amplitude * (1 + (r / r_core)^2)^(-3beta + 1/2)`.
+`r` is the elliptical radius around `(x0, y0)`, with the major axis at angle
+`theta` from the x axis and axis ratio `q`.
+"""
 struct Beta2D{
         T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, T7 <: Real, C,
     } <: AbstractModel{2, 1}
@@ -130,6 +160,11 @@ Beta2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, r_core = 1.0, beta = 0.67, q = 1.0
 end
 
 
+"""
+    Const2D(; value = 0.0)
+
+A `2 => 1` constant: `value` at every point, e.g. a flat sky background.
+"""
 Base.@kwdef struct Const2D{T <: Real} <: AbstractModel{2, 1}
     value::T = 0.0
 end
