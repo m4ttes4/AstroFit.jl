@@ -42,11 +42,10 @@ end
 Random.seed!(42)
 npix    = 100
 coord   = range(-8.0, 8.0; length = npix)
-X       = [x for x in coord, _ in coord]
-Y       = [y for _ in coord, y in coord]
+pts     = Coords(coord, coord)   # pixel (i, j) is the point (coord[i], coord[j])
 σ_noise = 0.4
-img_data = render(true_scene, X, Y) .+ σ_noise .* randn(size(X))
-err      = fill(σ_noise, size(X))
+img_data = render(true_scene, pts) .+ σ_noise .* randn(size(pts))
+err      = fill(σ_noise, size(pts))
 
 # ---------------------------------------------------------------------------
 # 3. Model with constraints and priors
@@ -114,7 +113,7 @@ end
 # ---------------------------------------------------------------------------
 # 4. Log-posterior target + AD gradient wrapper
 # ---------------------------------------------------------------------------
-target = ObjectiveFunction(cm, (X, Y), img_data, err; statistic = logposterior)
+target = ObjectiveFunction(cm, pts, img_data, err; statistic = logposterior)
 ℓ = ADgradient(:ForwardDiff, target)
 
 println("free parameters : ", nfree(cm))
@@ -152,7 +151,7 @@ posterior_median = vec(median(Array(chain); dims = 1))
 # 7. Best-fit image from posterior median
 # ---------------------------------------------------------------------------
 fit = withparams(cm, posterior_median)
-img_fit   = render(fit, X, Y)
+img_fit   = render(fit, pts)
 img_resid = img_data .- img_fit
 
 logstretch(img) = log10.(clamp.(img, 0.1, Inf))

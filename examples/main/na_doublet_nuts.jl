@@ -1,15 +1,14 @@
 # Bayesian version of na_doublet_fit.jl: the Na I D doublet + He I emission,
-# seen through a fixed instrumental PSF, with NUTS (AdvancedHMC.jl) instead of
-# the LBFGS point estimate. Same scene and the same physical ties — the depth
+# with NUTS (AdvancedHMC.jl) instead of the LBFGS point estimate. Same scene and the same physical ties — the depth
 # ratio, atomic separation, shared velocity/dispersion — now the posterior
-# gives credible intervals on the gas velocity and the intrinsic width.
+# gives credible intervals on the gas velocity and the line width.
 #
 # Prior rationale (all Truncated to their physical bound, since logposterior no
 # longer auto-rejects out-of-bounds points — the Truncated wall is what NUTS
 # feels):
 #   d2.amplitude → Normal, absorption only (negative)
 #   d2.mean      → Normal on the velocity window (drives the velocity posterior)
-#   d2.sigma     → LogNormal, strictly positive intrinsic width
+#   d2.sigma     → LogNormal, strictly positive line width
 #   hei.amplitude→ LogNormal, emission only (positive)
 #   hei.sigma    → LogNormal, own width
 #   cont.slope/intercept → Normal on ℝ (continuum is unbounded, no truncation)
@@ -31,12 +30,9 @@ const L_NAD_D2 = 5889.95
 const L_NAD_D1 = 5895.92
 const C_KMS = 2.998e5
 
-const STEP = 0.1             # grid step [A/sample] — kernels work in samples
-const SIGMA_INST = 1.6       # instrumental resolution [A]: partially blends the doublet
-
 # ---------------------------------------------------------------------------
-# 1. True model — doublet at +45 km/s, ratio 2:1, intrinsic width 0.45 A,
-#    plus He I emission; the instrument smears every line to ~2.25 A
+# 1. True model — doublet at +45 km/s, ratio 2:1, width 0.45 A,
+#    plus He I emission
 # ---------------------------------------------------------------------------
 v_true = 45.0
 shift = L_NAD_D2 * v_true / C_KMS
@@ -54,7 +50,7 @@ end
 # 2. Synthetic data
 # ---------------------------------------------------------------------------
 Random.seed!(123)
-λ = collect(5860.0:STEP:5925.0)
+λ = collect(5860.0:0.1:5925.0)
 σ_noise = 0.02
 y_true = render(true_model, λ)
 y = y_true .+ σ_noise .* randn(length(λ))
@@ -132,7 +128,7 @@ chain = AbstractMCMC.sample(
 )
 
 # ---------------------------------------------------------------------------
-# 6. Diagnostics — velocity and intrinsic width as posterior credible intervals
+# 6. Diagnostics — velocity and line width as posterior credible intervals
 # ---------------------------------------------------------------------------
 println("\n", chain)
 
@@ -151,7 +147,7 @@ println()
 println("gas velocity   : ", round(vq[2]; digits = 1), " km/s  (+",
     round(vq[3] - vq[2]; digits = 1), " / -", round(vq[2] - vq[1]; digits = 1),
     ")   truth: ", v_true)
-println("intrinsic sigma: ", round(sq[2]; digits = 3), " A     (+",
+println("line sigma     : ", round(sq[2]; digits = 3), " A     (+",
     round(sq[3] - sq[2]; digits = 3), " / -", round(sq[2] - sq[1]; digits = 3),
     ")   truth: ", sigma_true)
 println()

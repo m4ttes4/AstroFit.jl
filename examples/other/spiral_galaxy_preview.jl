@@ -64,17 +64,16 @@ end
 
 npix = 50
 coord = range(-12.0, 12.0; length = npix)
-X = [x for x in coord, _ in coord]
-Y = [y for _ in coord, y in coord]
+pts = Coords(coord, coord)   # pixel (i, j) is the point (coord[i], coord[j])
 
 logstretch(img) = log10.(clamp.(img, 0.1, Inf))
 
 panels = [
-    ("Bulge (n=4)", render(bulge, X, Y)),
-    ("Disk (n=1)", render(disk, X, Y)),
-    ("Bar (n≈0.5)", render(bar, X, Y)),
-    ("Spiral arms", render(arms, X, Y)),
-    ("Full scene", render(scene, X, Y)),
+    ("Bulge (n=4)", render(bulge, pts)),
+    ("Disk (n=1)", render(disk, pts)),
+    ("Bar (n≈0.5)", render(bar, pts)),
+    ("Spiral arms", render(arms, pts)),
+    ("Full scene", render(scene, pts)),
 ]
 
 fig = Figure(size = (2000, 420))

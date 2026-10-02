@@ -26,7 +26,7 @@ I started this because I missed the way [Astropy modeling](https://docs.astropy.
 - Define reusable model components with clear names.
 - Attach physical constraints with `@constrain`.
 - Fit with a flat parameter vector through fast `withparams(cm, p)`.
-- Extend the system with plain Julia structs and `render` methods.
+- Extend the system with plain Julia structs and `evaluate` methods.
 
 ---
 
@@ -43,7 +43,6 @@ Pkg.add(url="https://github.com/m4ttes4/AstroFit.jl")
 - [Motivation](#motivation)
 - [Quick Start](#quick-start)
 - [Building Models](#building-models)
-- [Kernels (e.g. PSF Convolution)](#kernels-eg-psf-convolution)
 - [Adding Constraints](#adding-constraints)
 - [Working With Parameters](#working-with-parameters)
 - [Fitting](#fitting)
@@ -130,7 +129,7 @@ component (a gaussian, a constant, a power law) and you evaluate it with
 ```julia
 g = Gaussian1D(amplitude=3.0, mean=5.0, sigma=1.2)
 render(g, 5.0)           # scalar: value at that point
-render(g, 0:0.1:10)      # vector: automatic broadcast
+render(g, 0:0.1:10)      # vector: one value per point
 ```
 
 Every built-in model has keyword arguments with defaults, so you can omit the
@@ -212,85 +211,32 @@ spec.line_a.constraints  # constraint on each field: (Free(), Free(), Free())
 This is how you check values and constraint state at any point: before
 fitting, after fitting, or while debugging.
 
+### Points and arrays of points
 
-## Kernels (e.g. PSF Convolution)
-
-Most models answer "what is the value at this coordinate?"  one point at a
-time. A PSF convolution can't: the value at one point depends on its
-neighbours. Those are **kernels**, and they are ordinary models in every way
-that matters they live in the tree, they compose with the usual operators,
-they carry constraints, and they fit.
+A model declares how many numbers it takes per point: a 1D model takes a
+`Number`, a 2D model an `(x, y)` tuple. `render` takes one point, or an array
+whose elements are points, and returns one value per point in the array's shape:
 
 ```julia
-cm = @model begin
-    line = Gaussian1D(amplitude = 2.0, mean = 6563.0, sigma = 1.0)
-    cont = Const1D(value = 0.5)
-    psf  = GaussianPSF(sigma = 2.0)      # width in SAMPLES, not Å
-    (line |> psf) + cont                 # convolve the line, leave the continuum alone
-end
+disk = Gaussian2D(amplitude = 1.0, x0 = 32.0, y0 = 32.0, sigma = 4.0)
+img  = zeros(64, 64)
+x, y = collect(1.0:64.0), collect(1.0:64.0)
+mask = rand(Bool, size(img))
 
-render(cm, x)                            # whole array in, whole array out
+render(g, 5.0)                              # one point
+render(g, collect(0:0.1:10))                # a vector of numbers (1D)
+render(disk, (32.0, 32.0))                  # one 2D point
+render(disk, CartesianIndices(img))         # pixel (i, j) is at (i, j): the first pixel's centre is at 1
+render(disk, Coords(x, y))                  # physical axes: a lazy grid, no per-pixel memory
+render(disk, CartesianIndices(img)[mask])   # only the valid pixels
+out = similar(img)
+out .= render.(disk, Coords(x, y))          # in place, no allocation
 ```
 
-`|>` means what it always meant — feed the left output into the right — and the
-result composes further, so the convolved component is just another term:
+A matrix of numbers is not a set of points: `render(disk, img)` throws and asks
+for `CartesianIndices(img)`. Each point is evaluated on its own, so operations
+that mix points (convolution with a PSF, rebinning) are not supported yet.
 
-```julia
-(line |> psf) + cont        # convolved line on an unconvolved continuum
-(line |> psf) * transmission
-line |> psf1 |> psf2        # chained
-((line + wing) |> psf) + cont
-```
-
-### Writing your own
-
-A kernel subtypes `AbstractKernel` and defines the **array** render instead of
-the scalar one:
-
-```julia
-struct BoxKernel <: AbstractKernel
-    width::Int
-end
-
-function AstroFit.render(k::BoxKernel, ys::AbstractVector)
-    # ... return an array the same size as ys
-end
-```
-
-Two rules:
-
-- **Intensities in, intensities out.** The array a kernel receives is the values
-  produced upstream, not coordinates. Array index *is* the grid, so widths are
-  in samples and the grid is assumed uniform — convert physical widths yourself
-  when you build the kernel.
-- **Same axes out as in.** Framework evaluation checks each kernel's output
-  before downstream broadcasting. Direct calls to your array method must honor
-  that contract too. How you treat the edges (clamp, zero-pad,
-  renormalize) is your kernel's choice; `GaussianPSF` renormalizes so a flat
-  signal stays flat all the way to the borders.
-
-### Fitting a kernel
-
-Kernel fields default to `Fixed`, because a PSF is usually a known calibration
-input Opt in explicitly when you do want to fit one:
-
-```julia
-cm = @free cm.psf.sigma
-```
-
-Gradients flow through the convolution, so kernel models work with
-`OptimizationProblem` and ForwardDiff exactly like pointwise ones. Note that a
-free PSF width is often degenerate with the intrinsic line width only their
-combination is identifiable from the data.
-
-### Cost
-
-A kernel-free model is untouched by any of this. Whether a subtree is pointwise
-is answered from its *type*, so it folds away at compile time: a model with no
-kernel takes the same fused single-pass broadcast it always did, and its χ² loop
-still allocates nothing. Inside a kernel model, fusion breaks only where the
-kernel actually sits — `(a + b) |> psf` renders `a + b` in one fused pass before
-convolving.
 
 
 ## Adding Constraints
@@ -366,11 +312,8 @@ formula: bg + line_a + line_b
 > A `@constrain` block states the model's **full** constraint set: every
 > parameter not mentioned is reset to its default first, so re-running an edited
 > block (e.g. in the REPL) never leaves a stale constraint behind. The default is
-> `Free` for ordinary models and `Fixed` for [kernel](#kernels-eg-psf-convolution)
-> fields, which are calibration inputs — so a `psf.sigma` you released with
-> `@free` is fixed again (at its current value) by the next `@constrain` block;
-> re-state the `@free` inside the block to keep it fitted. Priors are exempt from
-> the reset — they persist across blocks until overwritten.
+> `Free` (`Fixed` for `AbstractKernel` fields, which are calibration inputs).
+> Priors are exempt from the reset — they persist across blocks until overwritten.
 > Constraining the same parameter twice in one block is a compile-time error, no
 > silent overwrites. Priors are the exception: two `~` lines on the same
 > parameter are allowed and the last one wins.
@@ -467,7 +410,10 @@ function by hand.
 
 ### ObjectiveFunction
 
-`ObjectiveFunction(cm, x, y, err; statistic)` bundles a model with data. The
+`ObjectiveFunction(cm, points, y, err; statistic)` bundles a model with data.
+`points` follows the same rules as `render` (a vector for 1D, `CartesianIndices(img)`,
+`Coords(x, y)`, …), and a masked fit is `CartesianIndices(img)[mask]` against
+`img[mask]`. The
 default statistic is `chi2`; other options are `loglikelihood`,
 `negloglikelihood`, `logposterior`, and `neglogposterior` (plain functions, all
 exported).
@@ -514,7 +460,7 @@ signature:
 ```julia
 function poisson_ll(f::ObjectiveFunction, p)
     model = withparams(f.cm, p)
-    counts = render(model, f.coords[1])
+    counts = render(model, f.points)
     sum(logpdf.(Poisson.(counts), f.y))
 end
 
@@ -672,7 +618,7 @@ get a `Chains` object directly), PairPlots.jl for corner plots, and so on.
 
 The main thing I want to add is a macro for defining new model components. Right
 now, bringing your own model means writing the full boilerplate by hand: the
-`@kwdef struct` with one type parameter per field, and a `render` method (see
+`@kwdef struct` with one type parameter per field, and an `evaluate` method (see
 [Extending AstroFit](#extending-astrofit)). It is not hard, but it is the same
 blocks every time, and it is the steepest part of the learning curve. I want
 that barrier gone.
@@ -689,23 +635,22 @@ The idea is to let you declare a component from a single formula:
 
 The coordinates come before the semicolon, the parameters (with their defaults)
 after it. From that one line the macro would generate everything the model
-protocol needs: the `@kwdef struct <: AbstractModel` with one `<:Real` type
-parameter per field, and the scalar `render` method
-(rewriting each bare parameter name into a field access on the model). I would
-not generate a hand-tuned `render!`. The generic broadcasting fallback already
-covers it, and the per-model loops in the zoo stay as opt-in micro-optimisations.
+protocol needs: the `@kwdef struct <: AbstractModel{1, 1}` with one `<:Real`
+type parameter per field (the number of coordinates before the semicolon is the
+input arity), and the `evaluate` method (rewriting each bare parameter name into
+a field access on the model).
 
 The `Gaussian1D` line above expands to exactly what the built-in zoo models
 already are, so it drops straight into `@model`, `@constrain`, and the fitting
 path:
 
 ```julia
-Base.@kwdef struct Gaussian1D{A<:Real, M<:Real, S<:Real} <: AbstractModel
+Base.@kwdef struct Gaussian1D{A<:Real, M<:Real, S<:Real} <: AbstractModel{1, 1}
     amplitude::A = 1.0
     mean::M = 0.0
     sigma::S = 1.0
 end
-render(m::Gaussian1D, x::Number) =
+AstroFit.evaluate(m::Gaussian1D, x::Number) =
     m.amplitude * exp(-((x - m.mean) / m.sigma)^2 / 2)
 ```
 
@@ -763,16 +708,17 @@ amplitudes and means tied to Hα by atomic physics ratios, all sigmas shared.
 
 |                | AstroFit       | Handwritten     | Ratio        |
 |----------------|----------------|-----------------|--------------|
-| render         | 9.7 µs         | 10.4 µs         | 0.94x        |
-| chi2           | 10.4 µs        | 11.3 µs         | 0.92x        |
-| gradient       | 25.7 µs        | 21.3 µs         | 1.21x        |
-| optimization   | 76.4 ms        | 61.3 ms         | 1.25x        |
+| render         | 10.8 µs        | 13.5 µs         | 0.80x        |
+| chi2           | 11.2 µs        | 13.6 µs         | 0.82x        |
+| gradient       | 22.8 µs        | 28.8 µs         | 0.79x        |
+| optimization   | 36.5 ms        | 43.7 ms         | 0.84x        |
 
-On the forward path (render, chi2) AstroFit is slightly faster because its internal
-`@fastmath` works well on `Float64`. The gradient and optimization show ~20%
-overhead: `withparams` rebuilds struct trees with `Dual` numbers on every call,
-which costs a bit more than a flat function that ForwardDiff can differentiate
-in one pass. That's the real price of the abstraction layer.
+AstroFit is faster on every row. `withparams` rebuilds the struct tree with
+`Dual` numbers on every gradient call, but that is a handful of straight-line
+constructions; what matters is the per-point loop. Every model's `evaluate` is
+inlined into it, so each point is one straight-line expression. (Without the
+inlining the gradient measured 1.17x or 1.38x depending on the run: a call left
+in the hot loop makes timing depend on where the JIT places the code.)
 
 See [`bench/astrofit_vs_handwritten.jl`](bench/astrofit_vs_handwritten.jl) for
 the full benchmark script.
@@ -810,14 +756,14 @@ end
 See [`examples/main/double_gaussian_fit.jl`](examples/main/double_gaussian_fit.jl) for the
 full script.
 
-### Na I D absorption doublet through an instrumental PSF (1D)
+### Na I D absorption doublet + He I (1D)
 
-The Na I D doublet in absorption plus a He I emission line, blurred by a
-simulated instrumental PSF wide enough to partially blend the two Na lines.
-Every tie has a physical reason: the doublet separation is atomic physics
-(free systemic velocity, fixed splitting), the depth ratio is the 2:1 and He I is tied to the same
-systemic velocity but keeps its own width since it is a different gas. The PSF is a known calibration, so `psf.sigma` stays `Fixed`; the width the fit
-recovers is the *intrinsic*, deconvolved line width.
+The Na I D doublet in absorption plus a He I emission line on a sloped
+continuum. Every tie has a physical reason: the doublet separation is atomic
+physics (free systemic velocity, fixed splitting), the depth ratio is the
+optically thin 2:1, the two Na lines share one width because they come from the
+same gas, and He I is tied to the same systemic velocity but keeps its own width
+since it is a different gas.
 
 ```julia
 cm = @model begin
@@ -825,8 +771,7 @@ cm = @model begin
     d2   = Gaussian1D(amplitude = -0.4, mean = L_NAD_D2, sigma = 0.8)
     d1   = Gaussian1D(amplitude = -0.2, mean = L_NAD_D1, sigma = 0.8)
     hei  = Gaussian1D(amplitude = 0.3, mean = L_HEI, sigma = 1.2)
-    psf  = GaussianPSF(sigma = SIGMA_INST / STEP)   # instrumental resolution, in samples
-    (cont + d2 + d1 + hei) |> psf
+    cont + d2 + d1 + hei
 end
 
 @constrain cm begin
@@ -834,7 +779,6 @@ end
     d1.mean      -> d2.mean + (L_NAD_D1 - L_NAD_D2) # atomic separation
     d1.sigma     -> d2.sigma                       # same gas
     hei.mean     -> d2.mean + (L_HEI - L_NAD_D2)   # same systemic velocity
-    psf.sigma                                      # known calibration, fixed
     # ... bounds on amplitudes, widths, and line position
 end
 ```
@@ -1021,11 +965,14 @@ component, and it takes two things.
 
 ### Step 1: define a struct
 
-Your struct needs to subtype `AbstractModel` and hold its parameters as fields.
-Use `@kwdef` so you get keyword constructors for free:
+Your struct subtypes `AbstractModel{I, O}` and holds its parameters as fields.
+`I` is how many numbers the model takes per point and `O` how many it returns:
+a spectrum is `AbstractModel{1, 1}`, an image `AbstractModel{2, 1}`, a coordinate
+transform of the plane `AbstractModel{2, 2}`. Use `@kwdef` so you get keyword
+constructors for free:
 
 ```julia
-Base.@kwdef struct Blackbody1D{T1<:Real, T2<:Real} <: AbstractModel
+Base.@kwdef struct Blackbody1D{T1<:Real, T2<:Real} <: AbstractModel{1, 1}
     temperature::T1 = 5000.0
     norm::T2        = 1.0
 end
@@ -1052,10 +999,10 @@ carried through reconstruction untouched.
 > internal value.
 
 ```julia
-struct InstrumentalPSF{S<:Real, C<:Real, V<:AbstractVector} <: AbstractKernel
-    sigma::S          # fittable — its own parameter, holds duals
-    scale::C          # fittable — its own parameter, independent of sigma
-    taps::V           # internal — a measured kernel is data, not a parameter
+struct TemplateLine{A<:Real, S<:Real, V<:AbstractVector} <: AbstractModel{1, 1}
+    amplitude::A      # fittable — its own parameter, holds duals
+    shift::S          # fittable — its own parameter, independent of amplitude
+    template::V       # internal — a measured profile is data, not a parameter
     halfwidth::Int    # internal — a count in samples
     normalize::Bool   # internal — a flag
     edge::Symbol      # internal — an edge policy
@@ -1066,21 +1013,23 @@ An internal field of any type needs no special handling — a gradient-based
 optimizer was never going to perturb a `Symbol` or an `Int`, and since nothing
 is promoted, nothing tries to turn one into a dual number.
 
-### Step 2: define `render`
+### Step 2: define `evaluate`
 
-`render` takes your model and a single scalar coordinate, and returns the model
-value at that point:
+`evaluate` takes your model and one point, and returns the model value there.
+It is not exported, so extend it qualified:
 
 ```julia
-function AstroFit.render(m::Blackbody1D, λ::Number)
+function AstroFit.evaluate(m::Blackbody1D, λ::Number)
     h, c, k = 6.626e-27, 2.998e10, 1.381e-16   # CGS
     ν = c / (λ * 1e-8)                           # Å → cm → Hz
     m.norm * 2h * ν^3 / c^2 / (exp(h * ν / (k * m.temperature)) - 1)
 end
 ```
 
-The coordinate argument (`λ`, `x`, `ν`, whatever makes sense) must accept
-`Number`, not just `Float64`, again for the same AD reason. That's it, your
+The point argument (`λ`, `x`, `ν`, whatever makes sense) must accept `Number`,
+not just `Float64`, again for the same AD reason. Users never call `evaluate`:
+they call `render`, which checks that the point and the returned value match
+the declared `I` and `O` and names your model when they don't. That's it, your
 model is ready.
 
 ### Using it
@@ -1104,118 +1053,85 @@ end
 ### Coordinate transforms
 
 Not every model produces flux. Some transform coordinates: a redshift, a
-velocity offset, a wavelength-to-energy conversion. These work through
-composition with `∘`:
+velocity offset, a wavelength-to-energy conversion. They are `1 => 1` models
+too, and work through composition with `∘`:
 
 ```julia
-Base.@kwdef struct Redshift1D{T<:Real} <: AbstractModel
-    z::T = 0.0
+Base.@kwdef struct Doppler1D{T<:Real} <: AbstractModel{1, 1}
+    v::T = 0.0                                 # km/s
 end
 
-AstroFit.render(m::Redshift1D, λ::Number) = λ / (1 + m.z)
+AstroFit.evaluate(m::Doppler1D, λ::Number) = λ / (1 + m.v / 299792.458)
 ```
 
-When you write `line ∘ zshift`, AstroFit evaluates the right side first
+When you write `line ∘ shift`, AstroFit evaluates the right side first
 (transforming the coordinate), then passes the result to the left side. So
-`Gaussian1D(...) ∘ Redshift1D(z=0.1)` evaluates the gaussian at the
+`Gaussian1D(...) ∘ Doppler1D(v = 300.0)` evaluates the gaussian at the
 rest-frame wavelength:
 
 ```julia
 spec = @model begin
-    line   = Gaussian1D(1.0, 5000.0, 10.0)
-    zshift = Redshift1D(z = 0.1)
-    line ∘ zshift
+    line  = Gaussian1D(1.0, 5000.0, 10.0)
+    shift = Doppler1D(v = 300.0)
+    line ∘ shift
 end
 ```
 
-### Optional: `render!` for speed
+### Precomputed constants: `_cache_`
 
-The scalar `render` is all you need. AstroFit will broadcast it over arrays
-automatically. But if your model has work that can be shared across points
-(precomputing constants, avoiding repeated allocations), you can define an
-in-place `render!` that fills a preallocated output array:
+`evaluate` runs once per point, so work that depends only on the parameters
+(a reciprocal, a `sincos`, a profile width) is best done once. Store it in a last
+field named `_cache_`, computed by an inner positional constructor:
 
 ```julia
-function AstroFit.render!(out::AbstractVector, m::Blackbody1D, λs::AbstractVector)
-    axes(out) == axes(λs) || throw(DimensionMismatch("output and coordinate axes must match"))
-    h, c, k = 6.626e-27, 2.998e10, 1.381e-16
-    @inbounds for i in eachindex(out, λs)
-        ν = c / (λs[i] * 1e-8)
-        out[i] = m.norm * 2h * ν^3 / c^2 / (exp(h * ν / (k * m.temperature)) - 1)
+struct Lorentz1D{A<:Real, X<:Real, W<:Real, K} <: AbstractModel{1, 1}
+    amplitude::A
+    x0::X
+    fwhm::W
+    _cache_::K
+    function Lorentz1D(amplitude::A, x0::X, fwhm::W) where {A<:Real, X<:Real, W<:Real}
+        c = (hw2 = (fwhm / 2)^2,)
+        return new{A, X, W, typeof(c)}(amplitude, x0, fwhm, c)
     end
-    out
 end
+Lorentz1D(; amplitude = 1.0, x0 = 0.0, fwhm = 1.0) = Lorentz1D(amplitude, x0, fwhm)
+
+AstroFit.evaluate(m::Lorentz1D, x::Number) =
+    m.amplitude * m._cache_.hw2 / ((x - m.x0)^2 + m._cache_.hw2)
 ```
 
-This is purely optional. Define it when profiling shows it matters.
+The rules:
 
-The destination must have exactly the prediction's axes and an element type that
-can hold its values. When differentiating, that may require a dual-valued buffer.
-Generic `render!` supports array-native models too, but their whole-array work
-can allocate intermediate arrays.
+- `_cache_` must be the **last** field; AstroFit throws otherwise.
+- It is not a parameter: it gets no optimizer slot and no constraint.
+- `withparams` calls the positional constructor with every other field in
+  order, so the cache is recomputed whenever the parameters change, and its
+  type follows theirs (dual numbers flow through it). `@kwdef` cannot express
+  this, so write the keyword constructor by hand.
 
-One rule if your model takes more than one coordinate: **broadcast, do not write a
-linear `eachindex(out, xs, ys)` loop.** A linear loop demands identical axes, and
-that rejects two of the three coordinate forms below — including the one a PSF
-needs. The built-in 2D models broadcast a shared helper with their constants
-hoisted out of it; see [`src/zoo/models2d.jl`](src/zoo/models2d.jl).
+The built-in `Voigt1D` and 2D models work this way; see
+[`src/zoo/models2d.jl`](src/zoo/models2d.jl).
 
-### Rendering a 2D model
+### A 2D model
 
-Three ways to say where the model is evaluated, in order of how much you have to
-type:
+A 2D model declares `AbstractModel{2, 1}` and takes its point as a tuple:
 
 ```julia
-# 1. an image — no coordinates at all. The grid is the array's own index space,
-#    so the model's parameters are in pixels.
-img = render(scene, image)          # same size as `image`; its values are ignored
-render!(out, scene)                 # `out` is the image: grid and destination
-
-# 2. grid form — one axis per dimension, shaped to broadcast. Physical units,
-#    and the coordinates do not scale with the picture.
-x = collect(range(-8, 8; length = 100))
-y = reshape(x, 1, :)                # a column against a row — zero-copy
-img = render(scene, x, y)           # 100×100
-
-# 3. flat point list — every coordinate array co-shaped with the output, for
-#    scattered points or a meshgrid you already have.
-img = render(scene, X, Y)
-```
-
-Form 1 is form 2 with the axes filled in for you. For pointwise models, allocating
-rendering pays only for the output and the built-in `render!` methods allocate
-nothing. Kernels may allocate working arrays in either form.
-
-A bare kernel reads a matrix as intensities. A source-to-kernel pipe first renders
-its source on the template's index grid, then passes those intensities to the
-kernel. Values produced inside a pipe never become templates: a subsequent
-`Linear1D`, for example, transforms each intensity. See
-[ADR-0007](docs/adr/0007-rendering-protocol.md).
-
-### Array-native models
-
-A model that needs whole coordinate arrays can opt into the same evaluator
-without becoming a kernel:
-
-```julia
-struct ArrayScale{T} <: AbstractModel
-    scale::T
+struct ExpDisk2D{A<:Real, X<:Real, Y<:Real, H<:Real} <: AbstractModel{2, 1}
+    amplitude::A
+    x0::X
+    y0::Y
+    h::H
 end
-AstroFit.evalstyle(::Type{<:ArrayScale}) = Domainwise()
-AstroFit.render(m::ArrayScale, xs::AbstractArray) = m.scale .* xs
-
-m = ArrayScale(2.0)
-render(m, [1.0, 2.0])       # [2.0, 4.0]
-render!(zeros(2), m, [1.0, 2.0])
+AstroFit.evaluate(m::ExpDisk2D, (x, y)::NTuple{2, Number}) =
+    m.amplitude * exp(-hypot(x - m.x0, y - m.y0) / m.h)
 ```
 
-Declare the style as well as the array method. It applies consistently to named
-leaves, compiled models, arithmetic, pipes, and objectives. A root call supplies
-coordinates; a pipe supplies its left child's values. Unlike a pointwise model,
-an array-native leaf reads a lone matrix as array data. Multiple coordinate
-arrays should follow the same broadcasting convention as the 2D examples above.
-Use `AbstractKernel` when the model specifically transforms one intensity array
-on its index grid; that subtype already declares `Domainwise()`.
+`NTuple{2, Number}` accepts mixed element types, such as an `Int` pixel index
+beside a dual number. It renders on every array of points described in
+[Points and arrays of points](#points-and-arrays-of-points): `CartesianIndices(img)`
+for pixels, `Coords(x, y)` for physical axes, a masked subset, or a vector of
+tuples.
 
 ---
 
@@ -1352,7 +1268,7 @@ render(withparams(spec, p), x)
 
 This is also why custom models should accept `Number` fields and coordinates:
 ForwardDiff dual values flow through the generated reconstruction and into
-`render` without special cases.
+`evaluate` without special cases.
 
 ### Constraint Edits
 

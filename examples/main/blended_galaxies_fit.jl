@@ -28,12 +28,11 @@ end
 Random.seed!(42)
 npix = 100
 coord = range(-8.0, 8.0; length = npix)
-X = [x for x in coord, _ in coord]
-Y = [y for _ in coord, y in coord]
+pts = Coords(coord, coord)   # pixel (i, j) is the point (coord[i], coord[j])
 σ_noise = 0.4
-img_true = render(true_scene, X, Y)
-img_data = img_true .+ σ_noise .* randn(size(X))
-err = fill(σ_noise, size(X))
+img_true = render(true_scene, pts)
+img_data = img_true .+ σ_noise .* randn(size(pts))
+err = fill(σ_noise, size(pts))
 
 # ---------------------------------------------------------------------------
 # 3. Fitting model — deliberately bad initial guess + constraints
@@ -84,7 +83,7 @@ end
 # ---------------------------------------------------------------------------
 # 4. Fit
 # ---------------------------------------------------------------------------
-prob = OptimizationProblem(cm, (X, Y), img_data, err)
+prob = OptimizationProblem(cm, pts, img_data, err)
 sol = solve(prob, Fminbox(LBFGS()))
 
 fit = withparams(cm, sol.u) 
@@ -98,8 +97,8 @@ println()
 # ---------------------------------------------------------------------------
 # 5. Plot: data | initial guess | best fit | residual
 # ---------------------------------------------------------------------------
-img_init = render(cm, X, Y)
-img_fit = render(fit, X, Y)
+img_init = render(cm, pts)
+img_fit = render(fit, pts)
 img_resid = img_data .- img_fit
 
 logstretch(img) = log10.(clamp.(img, 0.1, Inf))

@@ -18,7 +18,7 @@ can't see because both sides regress together).
 
 For each critical path, register two keys side by side:
 
-- `…/astrofit` — the library call (`render!`, `chi2`, `f(p)`, `gradient(f,p)`)
+- `…/astrofit` — the library call (`out .= render.(m, xs)`, `chi2`, `f(p)`, `gradient(f,p)`)
 - `…/handwritten` — the same math as a plain `@inbounds` loop / inlined kernel,
   no `CompiledModel`, no `withparams`, no `ObjectiveFunction`
 
@@ -64,7 +64,7 @@ Grouped by `SUITE` key. Each line is one hot path; `→ why` names the risk a
 regression would introduce.
 
 ### `render` — the inner kernel (throughput floor)
-Single-point `render` + broadcast `render!`, one bench per model. Everything
+Single-point `render` + in-place broadcast `out .= render.(m, xs)`, one bench per model. Everything
 above sits on this loop.
 
 - **1D**: `Gaussian1D`, `Lorentzian1D`, `Voigt1D`, `Linear1D`, `Const1D`,
@@ -73,13 +73,15 @@ above sits on this loop.
 - `→ why`: pow/exp-heavy kernels (`Sersic2D` has `^(1/n)`, `Moffat2D`/`Beta2D`
   fractional powers, `BlackBody1D` `expm1`) dominate fit cost. A scalar→pow
   regression here multiplies through every objective eval.
-- Cover both `render(m, x)` scalar and `render!(out, m, xs)` broadcast — the
-  broadcast path has its own `@inbounds` loop (`models1d.jl:14`) that can drift
-  from the scalar one.
+- Cover both `render(m, x)` scalar and `out .= render.(m, xs)` broadcast — the
+  broadcast inlines the point method into the loop, and a lost `@inline` shows
+  up there (and in `gradient`) before it shows up on a single point.
 
 ### `compound` — tree evaluation
 - `render` of a `+`-compound (e.g. `cont + g1 + g2`, and a 4-component 2D scene
-  like the blended-galaxies example).
+  like the blended-galaxies example). 2D points are `Coords(x, y)`;
+  `mixed/coords` pairs the χ² and its gradient over `Coords` with a handwritten
+  double loop on the axes.
 - `→ why`: recursive tree walk; a type-instability in the `+` node propagates
   to every fit. Bench 2-term and 4-term to expose super-linear growth.
 
@@ -128,7 +130,7 @@ above sits on this loop.
 
 | group | handwritten counterpart | target ratio |
 |---|---|---|
-| `render` (scalar/`render!`) | inlined kernel loop (the exact formula, no struct) | ~1.0 |
+| `render` (scalar/in-place broadcast) | inlined kernel loop (the exact formula, no struct) | ~1.0 |
 | `compound` | sum of inlined kernels in one fused loop | ~1.0 |
 | `withparams` | construct the concrete model struct directly from `p` | ~1.0 |
 | `chi2` | `@inbounds` residual loop over inlined `render` | ~1.0 |
@@ -157,8 +159,7 @@ const SUITE = BenchmarkGroup()
 # ---- shared fixtures ----
 const X1 = collect(0.0:0.01:12.0)                       # ~1200 pts
 const c  = range(-8.0, 8.0; length = 100)
-const X2 = [x for x in c, _ in c]
-const Y2 = [y for _ in c, y in c]
+const P2 = Coords(collect(c), collect(c))                # 100×100 points, axes only
 
 # handwritten kernels — the bare-loop floor each library path is measured against
 hw_gauss1d!(out, A, μ, σ, xs) = (@inbounds for i in eachindex(out, xs)
@@ -176,7 +177,7 @@ end
 # ---- render: library vs handwritten, side by side ----
 SUITE["render"] = BenchmarkGroup()
 let m = Gaussian1D(8.0, 5.0, 0.6), out = similar(X1)
-    SUITE["render"]["Gaussian1D/render!/astrofit"]    = @benchmarkable render!($out, $m, $X1)
+    SUITE["render"]["Gaussian1D/render!/astrofit"]    = @benchmarkable $out .= render.($m, $X1)
     SUITE["render"]["Gaussian1D/render!/handwritten"] = @benchmarkable hw_gauss1d!($out, 8.0, 5.0, 0.6, $X1)
 end
 # … one paired (astrofit/handwritten) entry per model in the list
@@ -253,7 +254,7 @@ This posts a PR comment with per-benchmark deltas vs the base branch. Add
   lookups, not your code.
 - **Report `minimum`/`median`, never `mean`** — GC and scheduler noise live in
   the tail; minimum is the truest single-thread cost.
-- **Watch allocations, not just time** — `withparams`/`chi2`/`render!` should be
+- **Watch allocations, not just time** — `withparams`/`chi2`/`out .= render.(m, xs)` should be
   zero-alloc; a non-zero `memory`/`allocs` in the report is the earliest signal
   of a type instability, often before wall-time moves.
 - **Pin sizes in `const` fixtures** — changing array length between revisions
