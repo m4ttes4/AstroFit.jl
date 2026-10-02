@@ -39,6 +39,9 @@
         m = Misplaced(nothing, 1.0)
         m
     end
+
+    @fix cm.t.sigma = 4.0
+    @test render(cm, 3.0) ≈ cos(0.5) * 3.0 / 4.0  # _cache_ rebuilt from the new σ
 end
 
 @testitem "withparams honours a constructorof overload defined after loading" tags = [:authoring] begin

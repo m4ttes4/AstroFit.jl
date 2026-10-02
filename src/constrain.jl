@@ -42,7 +42,12 @@ function validate(cm::CompiledModel)
     return cm
 end
 
-_vnode(n, cm) = (_vnode(n.left, cm); _vnode(n.right, cm); nothing)
+# Rebuild the tree through withparams so Fixed values, Tied fields and `_cache_` follow the
+# new constraints: render(cm, x) reads the tree as stored. Call after validate, so an
+# invalid tie reports validate's message instead of a KeyError from withparams' slot map.
+_resync(cm::CompiledModel) = withparams(cm, params(cm))
+
+_vnode(n, cm) =(_vnode(n.left, cm); _vnode(n.right, cm); nothing)
 function _vnode(l::Leaf{lname}, cm) where {lname}
     for (i, c) in enumerate(l.constraints)
         c isa Tied || continue

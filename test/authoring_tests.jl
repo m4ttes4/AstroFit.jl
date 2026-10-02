@@ -358,3 +358,37 @@ end
     g = ForwardDiff.gradient(loss, p)
     @test all(isfinite, g)
 end
+
+@testitem "constraint edits update the stored model values" tags = [:authoring] begin
+    using AstroFit
+
+    cm = @model begin
+        a = Gaussian1D(amplitude = 1.0, mean = 0.0, sigma = 1.0)
+        b = Gaussian1D(amplitude = 1.0, mean = 5.0, sigma = 1.0)
+        a + b
+    end
+    @fix cm.a.sigma = 2.0
+    @test render(cm, 2.0) ≈ exp(-1 / 2) + exp(-9 / 2)  # a(2) with σ = 2, b(2) = exp(-3² / 2)
+    @tie cm.b.mean -> cm.a.mean + 1.0
+    @test render(cm, 1.0) ≈ exp(-1 / 8) + 1.0  # a(1) with σ = 2, b peaks at 1
+
+    # A tie to a fixed master is still rejected by validate, before withparams runs.
+    @test_throws "not a free parameter" (m = cm; @tie m.b.sigma -> m.a.sigma)
+
+    # In a block, ties are checked against the final state: the master is a kernel field
+    # (Fixed by default) freed later in the same block.
+    struct Gain{G <: Real} <: AbstractKernel
+        gain::G
+    end
+    ck = @model begin
+        g = Gaussian1D(amplitude = 1.0, mean = 0.0, sigma = 1.0)
+        k = Gain(3.0)
+        g |> k
+    end
+    @constrain ck begin
+        g.sigma -> k.gain
+        @free k.gain
+    end
+    @test ck.g.model.sigma == 3.0
+    @test paramnames(ck) == [:g_amplitude, :g_mean, :k_gain]
+end
