@@ -1,189 +1,28 @@
-@testitem "zoo-style spectral line factory uses current constraints" tags = [:zoo] begin
+@testitem "recipes come with physical bounds and ties" tags = [:zoo, :prefab, :tied] begin
     using AstroFit
 
-    function emission_line(; center, amplitude = 2.0, sigma = 1.5, center_window = 2.0)
-        cm = @model begin
-            line = Gaussian1D(amplitude = amplitude, mean = center, sigma = sigma)
-            line
-        end
-        @constrain cm begin
-            line.amplitude in (0.0, Inf)
-            line.sigma in (0.0, Inf)
-            line.mean in (center - center_window, center + center_window)
-        end
-        cm
-    end
+    em = emission_line(center = 6563.0)
+    @test paramnames(em) == [:line_amplitude, :line_mean, :line_sigma]
+    @test bounds(em) == ([0.0, 6561.0, 0.0], [Inf, 6565.0, Inf])
 
-    emission = emission_line(center = 6563.0)
-    @test emission isa CompiledModel
-    @test nfree(emission) == 3
+    ab = absorption_line(center = 5890.0)
+    @test bounds(ab) == ([-Inf, 5888.0, 0.0], [0.0, 5892.0, Inf])
+    @test absorption_line(center = 5890.0, amplitude = 0.5).line.model.amplitude == -0.5
+    @test absorption_line(center = 5890.0, amplitude = -0.5).line.model.amplitude == -0.5  # a dip, whatever the sign
 
-    lo, hi = bounds(emission)
-    @test 0.0 in lo
-    @test 6561.0 in lo
-    @test 6565.0 in hi
-    @test render(emission, 6563.0) ≈ 2.0
-end
+    # [O III]: one free line; the red one follows at 2.98× the flux, the same velocity
+    # (λ scales with the rest-wavelength ratio) and the same width.
+    oiii = doublet(blue_center = 4959.0, red_center = 5007.0)
+    @test paramnames(oiii) == [:blue_amplitude, :blue_mean, :blue_sigma]
+    red = withparams(oiii, [2.0, 4960.0, 3.0]).red.model
+    @test red.amplitude ≈ 2.98 * 2.0
+    @test red.mean ≈ 5007 / 4959 * 4960.0
+    @test red.sigma == 3.0
 
-@testitem "zoo-style doublet ties physical ratios" tags = [:zoo, :tied] begin
-    using AstroFit
+    pl = powerlaw_continuum(x_ref = 5000.0)
+    @test paramnames(pl) == [:pl_norm, :pl_index]  # x_ref only sets the units
+    @test bounds(pl) == ([0.0, -Inf], [Inf, Inf])
 
-    blue_center = 4959.0
-    red_center = 5007.0
-    ratio = 2.98
-
-    doublet = @model begin
-        blue = Gaussian1D(amplitude = 1.0, mean = blue_center, sigma = 2.0)
-        red = Gaussian1D(amplitude = ratio, mean = red_center, sigma = 2.0)
-        blue + red
-    end
-
-    @constrain doublet begin
-        blue.amplitude in (0.0, Inf)
-        blue.sigma in (0.0, Inf)
-        red.amplitude -> ratio * blue.amplitude
-        red.mean -> (red_center / blue_center) * blue.mean
-        red.sigma -> blue.sigma
-    end
-
-    @test nfree(doublet) == 3
-    rebuilt = withparams(doublet, [2.0, 4960.0, 3.0])
-    @test rebuilt.red.model.amplitude ≈ ratio * 2.0
-    @test rebuilt.red.model.mean ≈ (red_center / blue_center) * 4960.0
-    @test rebuilt.red.model.sigma == 3.0
-    @test :red_amplitude ∉ paramnames(doublet)
-    @test :red_sigma ∉ paramnames(doublet)
-end
-
-@testitem "zoo-style spectrum composition namespaces flat leaves" tags = [:zoo] begin
-    using AstroFit
-
-    spectrum = @model begin
-        continuum = Linear1D(slope = 1.0e-4, intercept = 1.0)
-        line = Gaussian1D(amplitude = 2.0, mean = 6563.0, sigma = 1.5)
-        continuum + line
-    end
-
-    @constrain spectrum begin
-        continuum.intercept in (0.0, Inf)
-        line.amplitude in (0.0, Inf)
-        line.sigma in (0.0, Inf)
-    end
-
-    @test nfree(spectrum) == 5
-    @test spectrum.continuum.model.intercept == 1.0
-    @test spectrum.line.model.amplitude == 2.0
-    continuum_at_center = render(spectrum.continuum.model, 6563.0)
-    @test render(spectrum, 6563.0) > continuum_at_center
-end
-
-@testitem "zoo-style Redshift1D warps a shared spectral axis for multiple lines" tags = [:zoo] begin
-    using AstroFit
-
-    spectrum = @model begin
-        z = Redshift1D(z = 0.0)
-        line1 = Gaussian1D(amplitude = 1.0, mean = 6563.0, sigma = 2.0)
-        line2 = Gaussian1D(amplitude = 0.5, mean = 4861.0, sigma = 2.0)
-        z |> (line1 + line2)
-    end
-
-    @test paramnames(spectrum) ==
-        [:z_z, :line1_amplitude, :line1_mean, :line1_sigma, :line2_amplitude, :line2_mean, :line2_sigma]
-
-    @test render(spectrum, 6563.0) ≈ render(Gaussian1D(amplitude = 1.0, mean = 6563.0, sigma = 2.0), 6563.0) +
-        render(Gaussian1D(amplitude = 0.5, mean = 4861.0, sigma = 2.0), 6563.0)
-
-    shifted = withparams(spectrum, [1.0, 1.0, 6563.0, 2.0, 0.5, 4861.0, 2.0])
-    observed_center = 6563.0 * 2.0
-    @test render(shifted, observed_center) ≈ render(Gaussian1D(amplitude = 1.0, mean = 6563.0, sigma = 2.0), 6563.0) +
-        render(Gaussian1D(amplitude = 0.5, mean = 4861.0, sigma = 2.0), observed_center / 2.0)
-end
-
-@testitem "zoo-style 2D line profiles render and constrain physical params" tags = [:zoo, :twod] begin
-    using AstroFit
-
-    struct Gaussian2D{T <: Real} <: AbstractModel{2, 1}
-        amplitude::T
-        x0::T
-        y0::T
-        sigma_x::T
-        sigma_y::T
-    end
-
-    AstroFit.evaluate(m::Gaussian2D, (x, y)::NTuple{2, Number}) =
-        m.amplitude * exp(
-        -0.5 * (
-            ((x - m.x0) / m.sigma_x)^2 +
-                ((y - m.y0) / m.sigma_y)^2
-        )
-    )
-
-    scene = @model begin
-        bulge = Gaussian2D(3.0, 1.0, -2.0, 2.0, 1.0)
-        disk = Gaussian2D(1.0, 1.0, -2.0, 5.0, 3.0)
-        bulge + disk
-    end
-
-    @constrain scene begin
-        bulge.amplitude in (0.0, Inf)
-        bulge.sigma_x in (0.0, Inf)
-        bulge.sigma_y in (0.0, Inf)
-        disk.amplitude in (0.0, Inf)
-        disk.sigma_x in (0.0, Inf)
-        disk.sigma_y in (0.0, Inf)
-    end
-
-    @test nfree(scene) == 10
-    @test render(scene, (1.0, -2.0)) ≈ 4.0
-    @test render(scene, (4.0, -2.0)) < render(scene, (1.0, -2.0))
-
-    # along y = y0 only the x widths matter: bulge σx = 2, disk σx = 5
-    xs = [1.0, 2.0, 3.0, 4.0]
-    @test render(scene, [(x, -2.0) for x in xs]) ≈ @. 3exp(-((xs - 1) / 2)^2 / 2) + exp(-((xs - 1) / 5)^2 / 2)
-end
-
-@testitem "zoo models with a _cache_ differentiate through withparams" tags = [:zoo] begin
-    using AstroFit, ForwardDiff
-
-    # Central differences are an independent reference: error ~h² ≈ 1e-12, rounding ~eps/h ≈ 1e-10.
-    e(i, n) = (1:n) .== i
-    fd(f, p; h = 1.0e-6) = [(f(p .+ h .* e(i, length(p))) - f(p .- h .* e(i, length(p)))) / 2h for i in eachindex(p)]
-
-    voigt = @model begin
-        v = Voigt1D(amplitude = 2.0, mean = 0.1, sigma = 0.8, gamma = 0.5)
-        v
-    end
-    fv(p) = render(withparams(voigt, p), 0.7)
-    @test ForwardDiff.gradient(fv, params(voigt)) ≈ fd(fv, params(voigt)) rtol = 1.0e-6
-
-    # q fixed to an Int: the cache mixes a fixed Int, Float64 and dual fields (ADR 0005).
-    sersic = @model begin
-        s = Sersic2D(amplitude = 2.0, x0 = 0.1, y0 = -0.2, r_eff = 1.5, n = 2.0, q = 1, theta = 0.3)
-        s
-    end
-    @fix sersic.s.q
-    fs(p) = render(withparams(sersic, p), (0.9, 0.4))
-    @test ForwardDiff.gradient(fs, params(sersic)) ≈ fd(fs, params(sersic)) rtol = 1.0e-6
-end
-
-@testitem "Const2D is a flat 2D background that composes with 2D profiles" tags = [:zoo, :twod] begin
-    using AstroFit, ForwardDiff
-
-    # the arity is in the type: a 2D point gives the value, a 1D point is refused
-    @test render(Const2D(value = 0.3), (5.0, -7.0)) ≈ 0.3
-    @test_throws "Const2D takes 2 number(s) per point, got Float64" render(Const2D(), 1.0)
-
-    cm = @model begin
-        g = Gaussian2D(amplitude = 2.0, x0 = 1.0, y0 = -1.0, sigma = 0.5, q = 1.0, theta = 0.0)
-        sky = Const2D(value = 0.3)
-        g + sky
-    end
-    @test render(cm, (1.0, -1.0)) ≈ 2.3  # g's peak plus the background
-    @test render(cm, (40.0, 40.0)) ≈ 0.3  # far from g only the background is left
-
-    # duals flow through withparams; the sum is linear in the background,
-    # so d(render)/d(sky.value) = 1 at every point
-    f(p) = render(withparams(cm, p), (1.2, -0.7))
-    k = findfirst(==(:sky_value), paramnames(cm))
-    @test ForwardDiff.gradient(f, params(cm))[k] ≈ 1.0
+    bb = blackbody_continuum()
+    @test bounds(bb) == ([0.0, 0.0], [Inf, Inf])
 end

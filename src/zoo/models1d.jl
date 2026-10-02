@@ -156,7 +156,7 @@ end
 
 # Coordinate-only transform: no amplitude, just warps x before an inner model
 # renders it. Compose via Pipe (`z |> line`), not by embedding it inside
-# another leaf's constructor — see zoo_tests.jl for the single-leaf-per-`@model`-line rule.
+# another leaf's constructor — see model_tests.jl for the single-leaf-per-`@model`-line rule.
 """
     Redshift1D(; z = 0.0)
 
