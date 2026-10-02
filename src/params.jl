@@ -46,8 +46,11 @@ function Random.rand(rng::AbstractRNG, cm::CompiledModel)
     lb, ub = bounds(cm)
     names = paramnames(cm)
     for i in eachindex(lb, ub)
-        (isfinite(lb[i]) && isfinite(ub[i])) || throw(ArgumentError(
-            "parameter `$(names[i])` has no finite bounds — set bounds with `@bound` before sampling"))
+        (isfinite(lb[i]) && isfinite(ub[i])) || throw(
+            ArgumentError(
+                "parameter `$(names[i])` has no finite bounds — set bounds with `@bound` before sampling"
+            )
+        )
     end
     return [lb[i] + (ub[i] - lb[i]) * rand(rng) for i in eachindex(lb, ub)]
 end

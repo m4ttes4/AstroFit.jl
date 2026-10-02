@@ -26,14 +26,18 @@ end
 # separate bounds-derived fallback) keeps reference and target sharing the
 # same support automatically: truncated iff the user truncated the prior.
 function _check_target(f::AstroFit.ObjectiveFunction)
-    f.statistic === AstroFit.logposterior || throw(ArgumentError(
-        "Pigeons requires a log-density statistic. " *
-        "Use `ObjectiveFunction(cm, x, y, err; statistic = logposterior)`."
-    ))
-    f.priors === nothing && throw(ArgumentError(
-        "no priors set on this model — Pigeons requires every free parameter " *
-            "to have a prior (0/$(f.ndim) set)"
-    ))
+    f.statistic === AstroFit.logposterior || throw(
+        ArgumentError(
+            "Pigeons requires a log-density statistic. " *
+                "Use `ObjectiveFunction(cm, x, y, err; statistic = logposterior)`."
+        )
+    )
+    f.priors === nothing && throw(
+        ArgumentError(
+            "no priors set on this model — Pigeons requires every free parameter " *
+                "to have a prior (0/$(f.ndim) set)"
+        )
+    )
     return nothing
 end
 
