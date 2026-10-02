@@ -2,6 +2,7 @@ module AstroFit
 
 include("constraints.jl")
 include("model.jl")
+include("coords.jl")
 include("kernel.jl")
 include("zoo/models1d.jl")
 include("zoo/models2d.jl")
@@ -30,6 +31,7 @@ export logprior, setprior, ObjectiveFunction, chi2, loglikelihood, logposterior
 export negloglikelihood, neglogposterior
 export @model, @fix, @bound, @free, @tie, @prior, @constrain
 export render, render!
+export Coords
 export emission_line, absorption_line, doublet, powerlaw_continuum, blackbody_continuum
 
 end
