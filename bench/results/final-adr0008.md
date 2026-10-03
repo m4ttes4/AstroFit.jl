@@ -40,6 +40,21 @@ nello stesso albero. Il codice nativo del χ² con i duali era lo stesso del wor
 (`evaluate` in linea, solo `exp` chiamata fuori linea). Le misure di questo file vengono dal
 worktree pulito.
 
+**Anomalia chiusa come effetto del lavoro parallelo (2026-10-03).** Rimisurata nell'albero
+principale, ora senza altre sessioni (`HEAD` = `a8298ba`, `src/` = `ba1b9a8`,
+`pathof(AstroFit)` = albero principale), in tre processi distinti, con due rimisure del
+gradiente a fine processo dopo LBFGS:
+
+| esecuzione | render | χ² | gradiente | rimisure a fine processo (AstroFit / scritto a mano) |
+|---|---:|---:|---:|---|
+| 1 | 0.80x | 0.82x | 0.79x (14.8 µs) | 14.8 / 18.6, 14.8 / 18.6 µs |
+| 2 | 0.80x | 0.82x | 0.79x (14.7 µs) | 14.8 / 18.5, 14.8 / 18.6 µs |
+| 3 | 0.80x | 0.82x | 0.80x (14.8 µs) | 14.9 / 18.6, 14.9 / 18.6 µs |
+
+Il 1.83x non si riproduce. Il nuovo `bench/gradient_benchmark.jl` (`a8298ba`) dà inoltre
+`ForwardDiff.gradient` e `gradient!` con `GradientConfig` preallocata quasi uguali (14.75 contro
+14.67 µs per AstroFit): l'allocazione della configurazione non basta a spiegare un raddoppio.
+
 ## `bench/gradient_benchmark.jl` (albero principale, `src/` = `ea3f2a5`)
 
 | | χ² | alloc | gradiente | alloc |
