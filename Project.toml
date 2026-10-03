@@ -7,6 +7,7 @@ authors = ["Matteo Sapori <matteosap@hotmail.com>"]
 ConstructionBase = "187b0558-2788-49d3-abe0-74a17ed4e7c9"
 MacroTools = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+StatsAPI = "82ae8749-77ed-4fe6-ae5f-f523153014b0"
 
 [weakdeps]
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
@@ -30,6 +31,7 @@ MacroTools = "^0.5"
 Optimization = "5"
 OptimizationOptimJL = "0.4"
 Pigeons = "0.4"
+StatsAPI = "1"
 Test = "1"
 TestItemRunner = "1"
 julia = "1.9"

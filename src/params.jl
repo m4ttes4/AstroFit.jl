@@ -5,6 +5,7 @@
 # all-Fixed/Tied leaf contributes () without poisoning the element type.
 
 using Random: Random, AbstractRNG
+import StatsAPI: params
 
 _isfree(c) = c isa Free || c isa Bounded
 

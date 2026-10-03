@@ -1,3 +1,5 @@
+import StatsAPI: loglikelihood
+
 """
     ObjectiveFunction(cm::CompiledModel, points, y, [err]; statistic=chi2)
 
