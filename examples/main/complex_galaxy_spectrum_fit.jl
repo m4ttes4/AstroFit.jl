@@ -32,7 +32,7 @@ end
 
 AstroFit.evaluate(m::RedshiftAxis1D, lambda::Number) = lambda / (1 + m.z)
 
-Base.@kwdef struct DustScreen1D{A, B, C} <: AbstractModel{1, 1}
+Base.@kwdef struct DustScreen1D{A <: Real, B <: Real, C <: Real} <: AbstractModel{1, 1}
     a_v::A = 0.0
     lambda_ref::B = L_REF
     slope::C = 1.0
@@ -426,7 +426,7 @@ lines!(ax, lambda_plot, parts.continuum .+ parts.balmer; color = :crimson, linew
 lines!(ax, lambda_plot, parts.continuum .+ parts.broad_balmer; color = :purple3, linewidth = 1.7, label = "broad AGN Balmer")
 lines!(ax, lambda_plot, parts.continuum .+ parts.forbidden; color = :dodgerblue3, linewidth = 1.5, label = "forbidden lines")
 lines!(ax, lambda_plot, parts.continuum .+ parts.helium; color = :seagreen, linewidth = 1.5, label = "He I/II")
-lines!(ax, lambda_plot, parts.continuum .+ parts.absorption; color = :darkorange3, linewidth = 1.5, label = "Na D absorption")
+lines!(ax, lambda_plot, parts.continuum .+ parts.absorption; color = :darkorange3, linewidth = 1.5, label = "Ca H&K + Na D absorption")
 
 blue_lo = (L_CAK - 60.0) * (1 + parts.z)
 blue_hi = (L_HB + 70.0) * (1 + parts.z)

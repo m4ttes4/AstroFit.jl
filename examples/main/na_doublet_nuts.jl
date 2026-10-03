@@ -3,17 +3,16 @@
 # ratio, atomic separation, shared velocity/dispersion — now the posterior
 # gives credible intervals on the gas velocity and the line width.
 #
-# Prior rationale (all Truncated to their physical bound, since logposterior no
-# longer auto-rejects out-of-bounds points — the Truncated wall is what NUTS
-# feels):
-#   d2.amplitude → Normal, absorption only (negative)
+# Prior rationale (none is truncated: logposterior does not reject points outside
+# the bounds, so only the LogNormal priors keep their parameter on one side of 0):
+#   d2.amplitude → Normal centred on negative values (absorption), not truncated
 #   d2.mean      → Normal on the velocity window (drives the velocity posterior)
 #   d2.sigma     → LogNormal, strictly positive line width
 #   hei.amplitude→ LogNormal, emission only (positive)
 #   hei.sigma    → LogNormal, own width
-#   cont.slope/intercept → Normal on ℝ (continuum is unbounded, no truncation)
+#   cont.intercept → Normal on ℝ; cont.slope is fixed at its starting value (0)
 #
-# Run with:  julia --project=examples/ examples/main/na_doublet_nuts.jl
+# Run with:  julia --project=examples examples/main/na_doublet_nuts.jl
 
 using AstroFit
 using Distributions
@@ -67,7 +66,7 @@ cm = @model begin
     cont + d2 + d1 + hei
 end
 
-# Same bounds/ties/fixes as the MAP example, now with a prior on every free
+# Same bounds and ties as the MAP example, plus cont.slope fixed, now with a prior on every free
 # parameter — Bayesian inference needs one per free parameter (the continuum
 # included). Priors sit in the same @constrain block as the constraints.
 @constrain cm begin
@@ -180,7 +179,7 @@ lines!(ax, λ, y_fit; color = :red, linewidth = 2, label = "posterior median")
 axislegend(ax; position = :rb)
 
 display(fig)
-save("examples/na_doublet_nuts_fit.png", fig; px_per_unit = 2)
+save(joinpath(@__DIR__, "na_doublet_nuts_fit.png"), fig; px_per_unit = 2)
 
 # ---------------------------------------------------------------------------
 # 8. Pair plot of the physically interesting parameters
@@ -190,7 +189,7 @@ true_vals = [L_NAD_D2 + shift, sigma_true, -0.85, 0.55]
 
 pp = pairplot(chain[phys_names], PairPlots.Truth(
     Dict(n => v for (n, v) in zip(phys_names, true_vals))))
-save("examples/na_doublet_nuts_pairs.png", pp; px_per_unit = 2)
+save(joinpath(@__DIR__, "na_doublet_nuts_pairs.png"), pp; px_per_unit = 2)
 
-println("saved → examples/na_doublet_nuts_fit.png")
-println("saved → examples/na_doublet_nuts_pairs.png")
+println("saved → ", joinpath(@__DIR__, "na_doublet_nuts_fit.png"))
+println("saved → ", joinpath(@__DIR__, "na_doublet_nuts_pairs.png"))

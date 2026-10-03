@@ -1,5 +1,4 @@
 [![code style: runic](https://img.shields.io/badge/code_style-%E1%9A%B1%E1%9A%A2%E1%9A%BE%E1%9B%81%E1%9A%B2-black)](https://github.com/fredrikekre/Runic.jl)
-[![Aqua QA](https://juliatesting.github.io/Aqua.jl/dev/assets/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 [![codecov](https://codecov.io/gh/m4ttes4/AstroFit.jl/graph/badge.svg?token=75C3VYYJJI)](https://codecov.io/gh/m4ttes4/AstroFit.jl)
 
 # AstroFit
@@ -13,7 +12,7 @@ but they quickly become hard to reuse. AstroFit gives you composable models and
 keeps the fitting hot path close to handwritten speed by compiling parameter
 scatter and tie resolution into generated, straight-line code.
 
-I started this because I missed the way [Astropy modeling](https://docs.astropy.org/en/stable/modeling/) and [lmfit](https://lmfit.github.io/lmfit-py/) let you snap models together, but I wanted that in Julia where the compiler can actually inline everything. [`AccessibleModels`](https://github.com/) was another reference point for the composable-model idea.
+I started this because I missed the way [Astropy modeling](https://docs.astropy.org/en/stable/modeling/) and [lmfit](https://lmfit.github.io/lmfit-py/) let you snap models together, but I wanted that in Julia where the compiler can actually inline everything. `AccessibleModels` was another reference point for the composable-model idea.
 
 > [!WARNING]
 > AstroFit is a working proof of concept, not a
@@ -190,7 +189,7 @@ What this does:
 - Each `name = Model(...)` creates a named component. The name is how you
   refer to it in `@constrain`, `@fix`, `@tie`, and when inspecting results.
 - The last expression (`bg + line_a + line_b`) is the composition.
-  Every name must appear in it.
+  A named component left out of it is not part of the model.
 - The result is a `CompiledModel`, the object that carries constraints
   and exposes `params`, `bounds`, `withparams`, and the rest of the fitting
   API.
@@ -286,8 +285,8 @@ nfree(spec)        # 5
 paramnames(spec)   # [:bg_slope, :bg_intercept, :line_a_amplitude, :line_a_sigma, :line_b_amplitude]
 ```
 
-After adding constraints (see next section), the display updates to reflect
-them: fixed values turn red, bounds show their interval, tied parameters
+After `@constrain`, the display updates to reflect
+the constraints: fixed values turn red, bounds show their interval, tied parameters
 show their master:
 
 ```
@@ -419,7 +418,7 @@ default statistic is `chi2`; other options are `loglikelihood`,
 exported).
 
 ```julia
-λ   = collect(6540.0:0.5:6590.0)
+λ   = collect(4840.0:0.5:4980.0)
 y   = render(withparams(spec, params(spec)), λ) .+ 0.1 .* randn(length(λ))
 err = fill(0.1, length(λ))
 
@@ -734,8 +733,8 @@ Full working scripts are in the [`examples/`](examples/) directory.
 ### Double Gaussian + linear continuum (1D)
 
 Two emission lines on a sloped continuum, fitted to synthetic noisy data. The
-second Gaussian's width and amplitude are tied to the first (`g2.sigma = g1.sigma`,
-`g2.amplitude = 0.5 * g1.amplitude`), reducing 8 model parameters to 6 free ones.
+second Gaussian's width and amplitude are tied to the first (`g2.sigma -> g1.sigma`,
+`g2.amplitude -> 0.5 * g1.amplitude`), reducing 8 model parameters to 6 free ones.
 
 ```julia
 cm = @model begin
@@ -830,8 +829,8 @@ cm = @model begin
 end
 
 @constrain cm begin
-    disk1.n
-    disk2.n
+    disk1.n in (0.5, 6.0)
+    disk2.n in (0.5, 6.0)
     bulge1.x0    -> disk1.x0
     bulge1.y0    -> disk1.y0
     bulge1.theta -> disk1.theta
@@ -864,9 +863,9 @@ lines are tied to Hα through the Balmer decrement, all narrow lines share one
 velocity width, broad lines share another, and rest wavelengths don't move. Once
 you write those constraints down, only 23 parameters are actually free.
 
-`RedshiftAxis1D`, `DustScreen1D`, and `BalmerBreak1D` are custom components
-defined in the example script itself (see [Extending AstroFit](#extending-astrofit)),
-not built-ins:
+`DustScreen1D` and `BalmerBreak1D` are custom components defined in the example
+script itself (see [Extending AstroFit](#extending-astrofit)), not built-ins;
+`RedshiftAxis1D` is the script's own copy of the built-in `Redshift1D`:
 
 ```julia
 cm = @model begin

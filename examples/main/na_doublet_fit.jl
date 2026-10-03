@@ -106,5 +106,5 @@ lines!(ax, λ, y_fit; color = :red, linewidth = 2, label = "best fit")
 axislegend(ax; position = :rb)
 
 display(fig)
-# save("na_doublet_fit.png", fig; px_per_unit = 2)
-# println("saved → examples/main/na_doublet_fit.png")
+save(joinpath(@__DIR__, "na_doublet_fit.png"), fig; px_per_unit = 2)
+println("saved → ", joinpath(@__DIR__, "na_doublet_fit.png"))
