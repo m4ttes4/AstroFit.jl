@@ -10,12 +10,15 @@ struct Free <: AbstractConstraint end
 struct Bounded{T} <: AbstractConstraint
     lower::T
     upper::T
+    function Bounded{T}(lower, upper) where {T}
+        (isnan(lower) || isnan(upper)) && throw(ArgumentError("Bounded: lower and upper must not be NaN"))
+        lower ≥ upper && throw(ArgumentError("Bounded: requires lower < upper, got lower=$lower, upper=$upper"))
+        return new{T}(lower, upper)
+    end
 end
 function Bounded(lower, upper)
     lo, hi = promote(lower, upper)
-    (isnan(lo) || isnan(hi)) && throw(ArgumentError("Bounded: lower and upper must not be NaN"))
-    lo ≥ hi && throw(ArgumentError("Bounded: requires lower < upper, got lower=$lo, upper=$hi"))
-    Bounded(lo, hi)
+    return Bounded{typeof(lo)}(lo, hi)
 end
 
 # A parameter pinned to a constant — consumes no slot in p.

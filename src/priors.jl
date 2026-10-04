@@ -22,7 +22,7 @@ See also: [`logprior`](@ref), [`@prior`](@ref)
 setprior(args...) = _missing_distributions()
 
 """
-    logprior(cm::CompiledModel, p) -> Float64
+    logprior(f::ObjectiveFunction, p) -> Float64
 
 Evaluate the sum of log-prior densities at parameter vector `p`. Requires `Distributions.jl`.
 

@@ -1,6 +1,6 @@
 # Fit a double Gaussian + linear continuum to synthetic noisy data.
 #
-# Run with:  julia --project=. examples/double_gaussian_fit.jl
+# Run with:  julia --project=examples examples/main/double_gaussian_fit.jl
 
 using AstroFit
 using Optimization, OptimizationOptimJL, ForwardDiff
@@ -13,7 +13,7 @@ using Random
 true_model = @model begin
     cont = Linear1D(slope = 0.02, intercept = 1.0)
     g1 = Gaussian1D(amplitude = 8.0, mean = 5.0, sigma = 0.6)
-    g2 = Gaussian1D(amplitude = 4.0, mean = 7.5, sigma = 0.9)
+    g2 = Gaussian1D(amplitude = 4.0, mean = 7.5, sigma = 0.6)
     cont + g1 + g2
 end
 
@@ -78,5 +78,5 @@ lines!(ax, x, y_fit; color = :red, linewidth = 2, label = "best fit")
 axislegend(ax; position = :lt)
 
 display(fig)
-# save("examples/double_gaussian_fit.png", fig; px_per_unit = 2)
-# println("saved → examples/double_gaussian_fit.png")
+save(joinpath(@__DIR__, "double_gaussian_fit.png"), fig; px_per_unit = 2)
+println("saved → ", joinpath(@__DIR__, "double_gaussian_fit.png"))

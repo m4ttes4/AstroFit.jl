@@ -84,18 +84,28 @@ function _mergepriors(priors, ::Val{prefix}, cm::CompiledModel) where {prefix}
     return priors === nothing ? renamed : (priors..., renamed...)
 end
 
+# A model may end with a `_cache_` field: constants derived from its parameters by its
+# positional constructor. It is not a parameter, so it gets no constraint and no slot.
+function _nparams(::Type{M}) where {M <: AbstractModel}
+    i = findfirst(==(:_cache_), fieldnames(M))
+    i === nothing && return fieldcount(M)
+    i == fieldcount(M) || throw(ArgumentError("$(nameof(M)): `_cache_` must be the last field"))
+    return i - 1
+end
+
 """
     _defaults(m) -> NTuple{N, Free}
 
-Return a tuple of [`Free`](@ref) constraints, one per field of `m`.
+Return a tuple of [`Free`](@ref) constraints, one per parameter of `m` (every field
+except a trailing `_cache_`).
 """
-_defaults(m) = ntuple(_ -> Free(), fieldcount(typeof(m)))
+_defaults(m) = ntuple(_ -> Free(), _nparams(typeof(m)))
 
 # Kernels are the exception: their fields default Fixed, because a kernel is
 # normally a known calibration input, and a free integer field (a width in
 # samples) breaks ForwardDiff outright. Fit one with an explicit `@free`.
 # See docs/adr/0004-kernel-fields-fixed-by-default.md.
-_defaults(m::AbstractKernel) = ntuple(i -> Fixed(getfield(m, i)), fieldcount(typeof(m)))
+_defaults(m::AbstractKernel) = ntuple(i -> Fixed(getfield(m, i)), _nparams(typeof(m)))
 
 """
     _compiled(tree) -> CompiledModel
@@ -175,11 +185,11 @@ macro fix(a)
         (r, l, f) = _splitpath(a.args[1])
         r isa Symbol || error("nested paths require @constrain block")
         c = :(Fixed($(esc(a.args[2]))))
-        :($(esc(r)) = validate($(_setexpr(esc(r), l, f, c))))
+        :($(esc(r)) = _resync(validate($(_setexpr(esc(r), l, f, c)))))
     elseif a isa Expr && a.head === :.
         (r, l, f) = _splitpath(a)
         r isa Symbol || error("nested paths require @constrain block")
-        :($(esc(r)) = validate($(_setexpr(esc(r), l, f, _fixcurrent(esc(r), l, f)))))
+        :($(esc(r)) = _resync(validate($(_setexpr(esc(r), l, f, _fixcurrent(esc(r), l, f))))))
     else
         error("@fix expects `model.leaf.field` or `model.leaf.field = value`")
     end
@@ -211,7 +221,7 @@ macro tie(a)
     r isa Symbol || error("nested paths require @constrain block")
     (pe, lam) = _tiewalk(rhs, r)
     c = :(Tied($pe, $(esc(lam))))
-    return :($(esc(r)) = validate($(_setexpr(esc(r), l, f, c))))
+    return :($(esc(r)) = _resync(validate($(_setexpr(esc(r), l, f, c)))))
 end
 
 """
@@ -236,7 +246,7 @@ macro bound(a)
     r isa Symbol || error("nested paths require @constrain block")
     lo, hi = a.args[3].args
     c = :(Bounded($(esc(lo)), $(esc(hi))))
-    return :($(esc(r)) = validate($(_setexpr(esc(r), l, f, c))))
+    return :($(esc(r)) = _resync(validate($(_setexpr(esc(r), l, f, c)))))
 end
 
 """
@@ -254,7 +264,7 @@ See also: [`Free`](@ref), [`@fix`](@ref), [`@bound`](@ref), [`@constrain`](@ref)
 macro free(p)
     (r, l, f) = _splitpath(p)
     r isa Symbol || error("nested paths require @constrain block")
-    return :($(esc(r)) = validate($(_setexpr(esc(r), l, f, :(Free())))))
+    return :($(esc(r)) = _resync(validate($(_setexpr(esc(r), l, f, :(Free()))))))
 end
 
 """
@@ -367,7 +377,7 @@ macro constrain(cm, blk)
             error("@constrain: unrecognized expression `$s`")
         end
     end
-    push!(out, :($(esc(cm)) = validate($g)))
+    push!(out, :($(esc(cm)) = _resync(validate($g))))
     return Expr(:block, out...)
 end
 

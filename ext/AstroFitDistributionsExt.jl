@@ -43,23 +43,31 @@ function _resolve_priors(cm::AstroFit.CompiledModel, names)
     priors === nothing && return nothing
 
     prior_map = Dict(Symbol(leaf, :_, field) => dist for ((leaf, field), dist) in priors)
-    length(prior_map) == length(priors) || throw(ArgumentError(
-        "duplicate prior target in @constrain block"
-    ))
+    length(prior_map) == length(priors) || throw(
+        ArgumentError(
+            "duplicate prior target in @constrain block"
+        )
+    )
 
     resolved = map(names) do name
         dist = get(prior_map, name, nothing)
-        dist === nothing && throw(ArgumentError(
-            "parameter `$name` has no prior — every free parameter needs one for Bayesian inference"
-        ))
-        dist isa Distribution || throw(ArgumentError(
-            "prior for `$name` must be a Distribution, got $(typeof(dist))"
-        ))
+        dist === nothing && throw(
+            ArgumentError(
+                "parameter `$name` has no prior — every free parameter needs one for Bayesian inference"
+            )
+        )
+        dist isa Distribution || throw(
+            ArgumentError(
+                "prior for `$name` must be a Distribution, got $(typeof(dist))"
+            )
+        )
         dist
     end
-    length(prior_map) == length(names) || throw(ArgumentError(
-        "prior set for a target that isn't a free parameter of this model"
-    ))
+    length(prior_map) == length(names) || throw(
+        ArgumentError(
+            "prior set for a target that isn't a free parameter of this model"
+        )
+    )
 
     U = Union{unique(typeof.(resolved))...}
     return Vector{U}(resolved)
@@ -67,10 +75,12 @@ end
 
 function logprior(f::AstroFit.ObjectiveFunction, p)
     dists = f.priors
-    dists === nothing && throw(ArgumentError(
-        "no priors set on this model — logprior/logposterior require every " *
-            "free parameter to have a prior (0/$(length(p)) set)"
-    ))
+    dists === nothing && throw(
+        ArgumentError(
+            "no priors set on this model — logprior/logposterior require every " *
+                "free parameter to have a prior (0/$(length(p)) set)"
+        )
+    )
     s = 0.0
     for i in eachindex(dists, p)
         s += logpdf(dists[i], p[i])

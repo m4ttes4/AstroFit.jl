@@ -1,127 +1,170 @@
 # --- 1D model library ---
 #
-# Only Voigt1D carries a hand-written `render!`: it has constants worth hoisting out
-# of the loop. Everywhere else the scalar formula has nothing to share between
-# points, so the generic broadcasting `render!` (render.jl) compiles to the same
-# loop — a per-model copy would only be the formula written twice.
+# Voigt1D keeps its parameter-only constants in `_cache_`, computed once by its
+# positional constructor; the other models have nothing to share between points.
+#
+# The non-trivial evaluates are `@inline`: with ForwardDiff duals their bodies exceed
+# the inlining threshold, and the call left in the χ² loop measured the Hα + [NII]
+# gradient at 1.17x or 1.38x of handwritten depending on the run (0.79x inlined).
 
-Base.@kwdef struct Gaussian1D{A <: Real, M <: Real, S <: Real} <: AbstractModel
+"""
+    Gaussian1D(; amplitude = 1.0, mean = 0.0, sigma = 1.0)
+
+A `1 => 1` Gaussian: `amplitude * exp(-((x - mean) / sigma)^2 / 2)`.
+"""
+Base.@kwdef struct Gaussian1D{A <: Real, M <: Real, S <: Real} <: AbstractModel{1, 1}
     amplitude::A = 1.0
     mean::M = 0.0
     sigma::S = 1.0
 end
 
-render(m::Gaussian1D, x::Number) = m.amplitude * exp(-((x - m.mean) / m.sigma)^2 / 2)
+@inline evaluate(m::Gaussian1D, x::Number) = m.amplitude * exp(-((x - m.mean) / m.sigma)^2 / 2)
 
 
-Base.@kwdef struct Const1D{T <: Real} <: AbstractModel
+"""
+    Const1D(; value = 0.0)
+
+A `1 => 1` constant: `value` at every point, e.g. a flat continuum.
+"""
+Base.@kwdef struct Const1D{T <: Real} <: AbstractModel{1, 1}
     value::T = 0.0
 end
 
-render(m::Const1D, ::Number) = m.value
+evaluate(m::Const1D, ::Number) = m.value
 
 
-Base.@kwdef struct Linear1D{S <: Real, I <: Real} <: AbstractModel
+"""
+    Linear1D(; slope = 1.0, intercept = 0.0)
+
+A `1 => 1` straight line: `slope * x + intercept`.
+"""
+Base.@kwdef struct Linear1D{S <: Real, I <: Real} <: AbstractModel{1, 1}
     slope::S = 1.0
     intercept::I = 0.0
 end
 
-render(m::Linear1D, x::Number) = m.slope * x + m.intercept
+evaluate(m::Linear1D, x::Number) = m.slope * x + m.intercept
 
 
-Base.@kwdef struct Lorentzian1D{A <: Real, M <: Real, G <: Real} <: AbstractModel
+"""
+    Lorentzian1D(; amplitude = 1.0, mean = 0.0, gamma = 1.0)
+
+A `1 => 1` Lorentzian of half width `gamma`: `amplitude / (1 + ((x - mean) / gamma)^2)`.
+"""
+Base.@kwdef struct Lorentzian1D{A <: Real, M <: Real, G <: Real} <: AbstractModel{1, 1}
     amplitude::A = 1.0
     mean::M = 0.0
     gamma::G = 1.0
 end
 
-render(m::Lorentzian1D, x::Number) = m.amplitude / (1 + ((x - m.mean) / m.gamma)^2)
+@inline evaluate(m::Lorentzian1D, x::Number) = m.amplitude / (1 + ((x - m.mean) / m.gamma)^2)
 
 
 # ponytail: Thompson et al. 1987 pseudo-Voigt, no SpecialFunctions dep
-Base.@kwdef struct Voigt1D{A <: Real, M <: Real, S <: Real, G <: Real} <: AbstractModel
-    amplitude::A = 1.0
-    mean::M = 0.0
-    sigma::S = 1.0
-    gamma::G = 1.0
-end
+"""
+    Voigt1D(; amplitude = 1.0, mean = 0.0, sigma = 1.0, gamma = 1.0)
 
-function render(m::Voigt1D, x::Number)
-    fg = 2 * m.sigma * sqrt(2 * log(2))
-    fl = 2 * m.gamma
-    f = (
-        fg^5 + 2.69269fg^4 * fl + 2.42843fg^3 * fl^2 +
-            4.47163fg^2 * fl^3 + 0.07842fg * fl^4 + fl^5
-    )^0.2
-    r = fl / f
-    η = 1.36603r - 0.47719r^2 + 0.11116r^3
+A `1 => 1` pseudo-Voigt profile (Thompson et al. 1987): a mix of a Lorentzian and a
+Gaussian of common FWHM, computed from `sigma` (Gaussian) and `gamma` (Lorentzian half
+width). `amplitude` is the peak value, at `mean`.
+"""
+struct Voigt1D{A <: Real, M <: Real, S <: Real, G <: Real, C} <: AbstractModel{1, 1}
+    amplitude::A
+    mean::M
+    sigma::S
+    gamma::G
+    _cache_::C
+    # The profile width `f` and the mixing `η` depend only on the parameters.
+    function Voigt1D(amplitude::A, mean::M, sigma::S, gamma::G) where {A <: Real, M <: Real, S <: Real, G <: Real}
+        fg = 2 * sigma * sqrt(2 * log(2))
+        fl = 2 * gamma
+        f = (
+            fg^5 + 2.69269fg^4 * fl + 2.42843fg^3 * fl^2 +
+                4.47163fg^2 * fl^3 + 0.07842fg * fl^4 + fl^5
+        )^0.2
+        r = fl / f
+        c = (f = f, η = 1.36603r - 0.47719r^2 + 0.11116r^3)
+        return new{A, M, S, G, typeof(c)}(amplitude, mean, sigma, gamma, c)
+    end
+end
+Voigt1D(; amplitude = 1.0, mean = 0.0, sigma = 1.0, gamma = 1.0) = Voigt1D(amplitude, mean, sigma, gamma)
+
+@inline function evaluate(m::Voigt1D, x::Number)
+    (; f, η) = m._cache_
     u = 2(x - m.mean) / f
     return m.amplitude * (η / (1 + u^2) + (1 - η) * exp(-log(2) * u^2))
 end
 
-# The profile width `f` and the mixing `η` depend only on the parameters, so they
-# come out of the loop — this is the one 1D model where that is worth a method.
-function render!(out::AbstractArray, m::Voigt1D, xs::AbstractArray)
-    xs isa AbstractMatrix && return _copyrender!(out, _eval(m, xs))
-    _checkrendercoords(out, xs)
-    fg = 2 * m.sigma * sqrt(2 * log(2))
-    fl = 2 * m.gamma
-    f = (
-        fg^5 + 2.69269fg^4 * fl + 2.42843fg^3 * fl^2 +
-            4.47163fg^2 * fl^3 + 0.07842fg * fl^4 + fl^5
-    )^0.2
-    r = fl / f
-    η = 1.36603r - 0.47719r^2 + 0.11116r^3
-    ln2 = log(2)
-    @inbounds for i in eachindex(out, xs)
-        u = 2(xs[i] - m.mean) / f
-        out[i] = m.amplitude * (η / (1 + u^2) + (1 - η) * exp(-ln2 * u^2))
-    end
-    return out
-end
 
+"""
+    PowerLaw1D(; norm = 1.0, x_ref = 1.0, index = 1.0)
 
-Base.@kwdef struct PowerLaw1D{N <: Real, X <: Real, I <: Real} <: AbstractModel
+A `1 => 1` power law: `norm * (x / x_ref)^(-index)`.
+"""
+Base.@kwdef struct PowerLaw1D{N <: Real, X <: Real, I <: Real} <: AbstractModel{1, 1}
     norm::N = 1.0
     x_ref::X = 1.0
     index::I = 1.0
 end
 
-render(m::PowerLaw1D, x::Number) = m.norm * (x / m.x_ref)^(-m.index)
+@inline evaluate(m::PowerLaw1D, x::Number) = m.norm * (x / m.x_ref)^(-m.index)
 
 
-Base.@kwdef struct BlackBody1D{A <: Real, T <: Real} <: AbstractModel
+"""
+    BlackBody1D(; amplitude = 1.0, temperature = 1.0)
+
+A `1 => 1` Planck-shaped curve: `amplitude * x^3 / (exp(x / temperature) - 1)`, with `x`
+and `temperature` in the same units.
+"""
+Base.@kwdef struct BlackBody1D{A <: Real, T <: Real} <: AbstractModel{1, 1}
     amplitude::A = 1.0
     temperature::T = 1.0
 end
 
-render(m::BlackBody1D, x::Number) = m.amplitude * x^3 / (exp(x / m.temperature) - 1)
+@inline evaluate(m::BlackBody1D, x::Number) = m.amplitude * x^3 / (exp(x / m.temperature) - 1)
 
 
-Base.@kwdef struct BrokenPowerLaw1D{N <: Real, X <: Real, I1 <: Real, I2 <: Real} <: AbstractModel
+"""
+    BrokenPowerLaw1D(; norm = 1.0, x_break = 1.0, index1 = 1.0, index2 = 2.0)
+
+A `1 => 1` broken power law: `norm * (x / x_break)^(-index1)` for `x <= x_break` and
+`norm * (x / x_break)^(-index2)` above.
+"""
+Base.@kwdef struct BrokenPowerLaw1D{N <: Real, X <: Real, I1 <: Real, I2 <: Real} <: AbstractModel{1, 1}
     norm::N = 1.0
     x_break::X = 1.0
     index1::I1 = 1.0
     index2::I2 = 2.0
 end
 
-render(m::BrokenPowerLaw1D, x::Number) =
+@inline evaluate(m::BrokenPowerLaw1D, x::Number) =
     m.norm * (x / m.x_break)^(x <= m.x_break ? -m.index1 : -m.index2)
 
 
-Base.@kwdef struct Exponential1D{A <: Real, T <: Real} <: AbstractModel
+"""
+    Exponential1D(; amplitude = 1.0, tau = 1.0)
+
+A `1 => 1` exponential decay: `amplitude * exp(-x / tau)`.
+"""
+Base.@kwdef struct Exponential1D{A <: Real, T <: Real} <: AbstractModel{1, 1}
     amplitude::A = 1.0
     tau::T = 1.0
 end
 
-render(m::Exponential1D, x::Number) = m.amplitude * exp(-x / m.tau)
+@inline evaluate(m::Exponential1D, x::Number) = m.amplitude * exp(-x / m.tau)
 
 
 # Coordinate-only transform: no amplitude, just warps x before an inner model
 # renders it. Compose via Pipe (`z |> line`), not by embedding it inside
-# another leaf's constructor — see zoo_tests.jl for the single-leaf-per-`@model`-line rule.
-Base.@kwdef struct Redshift1D{T <: Real} <: AbstractModel
+# another leaf's constructor — see model_tests.jl for the single-leaf-per-`@model`-line rule.
+"""
+    Redshift1D(; z = 0.0)
+
+A `1 => 1` coordinate transform: `x / (1 + z)`, the rest-frame coordinate of an observed
+`x`. Compose it in front of a model, `z |> line`.
+"""
+Base.@kwdef struct Redshift1D{T <: Real} <: AbstractModel{1, 1}
     z::T = 0.0
 end
 
-render(m::Redshift1D, x::Number) = x / (1 + m.z)
+evaluate(m::Redshift1D, x::Number) = x / (1 + m.z)

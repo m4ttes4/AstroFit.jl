@@ -9,8 +9,10 @@ docs/site/
 
 # Internal / dev files
 project.md
+PLAN.md
 CLAUDE.md
 CONTEXT.md
+docs/
 
 # OS
 .DS_Store

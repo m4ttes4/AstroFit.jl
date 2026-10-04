@@ -5,11 +5,12 @@
 # A named leaf in the annotated tree. `name` (the user symbol) lives in the type so
 # navigation resolves from the type; `constraints` is a Tuple positional to `model`'s
 # fields. Being an AbstractModel, the compound operators (Sum, …) compose leaves directly.
-struct Leaf{name, M, C} <: AbstractModel
+struct Leaf{name, I, O, M, C} <: AbstractModel{I, O}
     model::M
     constraints::C
 end
-Leaf{name}(model::M, constraints::C) where {name, M, C} = Leaf{name, M, C}(model, constraints)
+Leaf{name}(model::AbstractModel{I, O}, constraints::C) where {name, I, O, C} =
+    Leaf{name, I, O, typeof(model), C}(model, constraints)
 
 # A single annotated model tree (compound nodes + Leaf leaves) plus priors.
 struct CompiledModel{T, P}

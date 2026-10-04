@@ -2,7 +2,6 @@
 # text/plain CompiledModel show draws a colored, flattened tree.
 # ponytail: colors via stdlib printstyled (honors IOContext :color); no Crayons dep.
 
-const _NODE = Union{Sum, Difference, Product, Quotient, Pipe}
 const _ASSOC = Union{Sum, Product}            # only these flatten into sibling chains
 const _TIED_COLOR = 208                      # ANSI 256-color orange
 
@@ -13,6 +12,13 @@ _opsym(::Quotient) = "/"
 _opsym(::Pipe) = "|>"
 
 _leafname(::Leaf{n}) where {n} = n
+
+# The name an arity error shows for each side: a leaf by the name the user gave it in
+# @model, a compound node by its formula, a bare model by its type.
+_label(m::AbstractModel) = string(nameof(typeof(m)))
+_label(l::Leaf) = string(_leafname(l))
+_label(n::_COMPOUND) = "($(_label(n.left)) $(_opsym(n)) $(_label(n.right)))"
+
 _fmt(v::AbstractFloat) = string(round(v; sigdigits = 6))
 _fmt(v::AbstractArray) = summary(v)   # "101×101 Matrix{Float64}", not the whole dump
 _fmt(v) = string(v)
@@ -22,13 +28,13 @@ _fmt(v) = string(v)
 # chains like `a + b + c` flat, but guards `a + b*c` vs `(a+b)*c`).
 function _expr(node, parentop = nothing)
     node isa Leaf && return string(_leafname(node))
-    node isa _NODE || return sprint(show, node)
+    node isa _COMPOUND || return sprint(show, node)
     op = _opsym(node)
     inner = "$(_expr(node.left, op)) $op $(_expr(node.right, op))"
     return (parentop !== nothing && parentop != op) ? "($inner)" : inner
 end
 
-Base.show(io::IO, m::_NODE) = print(io, _expr(m))
+Base.show(io::IO, m::_COMPOUND) = print(io, _expr(m))
 Base.show(io::IO, l::Leaf) = print(io, _leafname(l))
 Base.show(io::IO, cm::CompiledModel) = print(io, _expr(getfield(cm, :tree)))
 
@@ -103,7 +109,7 @@ function _tree(io, node, prefix, islast, isroot = false, priors = Dict{Symbol, A
     child = isroot ? prefix : prefix * (islast ? "   " : "│  ")
     return if node isa Leaf
         _leafline(io, node); println(io)
-        fields = fieldnames(typeof(node.model))
+        fields = fieldnames(typeof(node.model))[eachindex(node.constraints)]  # skip `_cache_`
         isempty(fields) && return
         lname = _leafname(node)
         width = maximum(length(string(f)) for f in fields)

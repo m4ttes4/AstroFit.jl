@@ -10,9 +10,9 @@ using ConstructionBase: constructorof
 function setconstraint(cm::CompiledModel, leaf::Symbol, field::Symbol, c::AbstractConstraint)
     l = getproperty(cm, leaf)                       # ArgumentError if leaf missing
     i = findfirst(==(field), fieldnames(typeof(l.model)))
-    i === nothing && throw(
+    (i === nothing || i > length(l.constraints)) && throw(  # `_cache_` has no constraint
         ArgumentError(
-            "no field `$field` in `$leaf` ($(nameof(typeof(l.model))))"
+            "no parameter `$field` in `$leaf` ($(nameof(typeof(l.model))))"
         )
     )
     newleaf = Leaf{leaf}(l.model, Base.setindex(l.constraints, c, i))
@@ -42,6 +42,11 @@ function validate(cm::CompiledModel)
     return cm
 end
 
+# Rebuild the tree through withparams so Fixed values, Tied fields and `_cache_` follow the
+# new constraints: render(cm, x) reads the tree as stored. Call after validate, so an
+# invalid tie reports validate's message instead of a KeyError from withparams' slot map.
+_resync(cm::CompiledModel) = withparams(cm, params(cm))
+
 _vnode(n, cm) = (_vnode(n.left, cm); _vnode(n.right, cm); nothing)
 function _vnode(l::Leaf{lname}, cm) where {lname}
     for (i, c) in enumerate(l.constraints)
@@ -66,5 +71,5 @@ function _masterfree(cm, leaf::Symbol, field::Symbol)
     l = _nav(getfield(cm, :tree), Val(leaf))
     l === nothing && return false
     i = findfirst(==(field), fieldnames(typeof(l.model)))
-    return i === nothing ? false : _isfree(l.constraints[i])
+    return (i === nothing || i > length(l.constraints)) ? false : _isfree(l.constraints[i])
 end

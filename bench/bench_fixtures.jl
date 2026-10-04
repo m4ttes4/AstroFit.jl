@@ -5,24 +5,23 @@
 # NOTE the stale `bench/Project.toml` belongs to the older scripts in this folder
 # and is NOT used by this suite.
 #
-# Four cases, each a cut-down version of a real script in examples/main:
+# Three cases, each a cut-down version of a real script in examples/main:
 #
 #   SPEC  Halpha + [NII] doublet over a linear continuum   — pointwise 1D, ties, 6 free
-#   NAD   Na I D doublet + He I behind a fixed GaussianPSF — DOMAINWISE (kernel), 7 free
 #   WIDE  13-leaf galaxy spectrum, tie-heavy               — wide pointwise tree, 12 free
 #   IMG   two blended galaxies (bulge + disk)              — 2D, 100x100 image, 20 free
 #
 # Every case exposes the same fields, so a benchmark can loop over them:
 #
 #   cm      CompiledModel (constraints applied, validated)
-#   coords  Tuple of coordinate arrays, as passed to ObjectiveFunction
+#   points  array of points, as passed to ObjectiveFunction
 #   y       data (noisy realization of the truth), err its 1-sigma vector
 #   p       free-parameter vector (params(cm)) — the fit's starting point
 #   f       ObjectiveFunction (chi2)
 #   cfg     ForwardDiff.GradientConfig with FULL chunk, mirroring
 #           `_fullchunk` in ext/AstroFitOptimizationExt.jl
 #   g       preallocated gradient buffer
-#   out     preallocated render! buffer
+#   out     preallocated buffer for `out .= render.(m, points)`
 #
 # Data is built with an explicit Xoshiro(42) — never the global RNG — so a
 # `setup=` block that re-runs still sees identical numbers.
@@ -57,11 +56,11 @@ end
 # is what OptimizationFunction does through `AutoForwardDiff(chunksize = n)`.
 fullchunk(f, p) = ForwardDiff.GradientConfig(f, p, ForwardDiff.Chunk{length(p)}())
 
-_case(cm, coords, y, err, out) = (;
-    cm, coords, y, err, out,
+_case(cm, points, y, err, out) = (;
+    cm, points, y, err, out,
     p = params(cm),
-    f = ObjectiveFunction(cm, length(coords) == 1 ? coords[1] : coords, y, err),
-    cfg = fullchunk(ObjectiveFunction(cm, length(coords) == 1 ? coords[1] : coords, y, err), params(cm)),
+    f = ObjectiveFunction(cm, points, y, err),
+    cfg = fullchunk(ObjectiveFunction(cm, points, y, err), params(cm)),
     g = zeros(nfree(cm)),
 )
 
@@ -103,7 +102,7 @@ let truth = spec_model(slope = -0.002, intercept = 9.5, ha_amp = 10.5, ha_mean =
     y_true = render(truth, SPEC_X)
     err = fill(0.08, length(SPEC_X))
     y = y_true .+ err .* randn(RNG, length(SPEC_X))
-    global const SPEC = _case(spec_model(), (SPEC_X,), y, err, similar(y))
+    global const SPEC = _case(spec_model(), SPEC_X, y, err, similar(y))
 end
 
 # Handwritten baseline: the SPEC constraints (2 ties on mean, 2 on sigma, 1 line
@@ -127,53 +126,6 @@ function hand_spec_chi2(p, x, y, err)
 end
 
 # ---------------------------------------------------------------------------
-# NAD — Na I D doublet + He I through a fixed instrumental PSF.
-# The kernel makes the whole tree DOMAINWISE: no broadcast fusion, the
-# convolution allocates its working array. This is the other rendering regime.
-# ---------------------------------------------------------------------------
-
-const L_NAD_D2 = 5889.95
-const L_NAD_D1 = 5895.92
-const L_HEI = 5875.62
-const NAD_STEP = 0.1
-const SIGMA_INST = 1.6
-
-function nad_model(; slope = 0.0, intercept = 1.0, d2_amp = -0.4, d2_mean = L_NAD_D2, d2_sigma = 0.8, hei_amp = 0.3, hei_sigma = 1.2)
-    cm = @model begin
-        cont = Linear1D(slope = slope, intercept = intercept)
-        d2 = Gaussian1D(amplitude = d2_amp, mean = d2_mean, sigma = d2_sigma)
-        d1 = Gaussian1D(amplitude = 0.5 * d2_amp, mean = d2_mean + (L_NAD_D1 - L_NAD_D2), sigma = d2_sigma)
-        hei = Gaussian1D(amplitude = hei_amp, mean = L_HEI, sigma = hei_sigma)
-        psf = GaussianPSF(sigma = SIGMA_INST / NAD_STEP)
-        (cont + d2 + d1 + hei) |> psf
-    end
-    @constrain cm begin
-        cont.slope in (-0.1, 0.1)
-        cont.intercept in (0.0, 5.0)
-        d2.amplitude in (-5.0, 0.0)
-        d2.mean in (5885.0, 5895.0)
-        d2.sigma in (0.1, 3.0)
-        d1.amplitude -> 0.5 * d2.amplitude            # optically thin 2:1
-        d1.mean -> d2.mean + (L_NAD_D1 - L_NAD_D2)
-        d1.sigma -> d2.sigma
-        hei.amplitude in (0.0, 5.0)
-        hei.mean -> d2.mean + (L_HEI - L_NAD_D2)      # same systemic velocity
-        hei.sigma in (0.1, 5.0)
-        psf.sigma                                     # known calibration
-    end
-    return cm
-end
-
-const NAD_X = collect(5860.0:NAD_STEP:5925.0)
-
-let truth = nad_model(slope = -0.0015, intercept = 9.835 / 10, d2_amp = -0.85, d2_mean = L_NAD_D2 + 0.88, d2_sigma = 0.45, hei_amp = 0.55, hei_sigma = 0.9)
-    y_true = render(truth, NAD_X)
-    err = fill(0.02, length(NAD_X))
-    y = y_true .+ err .* randn(RNG, length(NAD_X))
-    global const NAD = _case(nad_model(), (NAD_X,), y, err, similar(y))
-end
-
-# ---------------------------------------------------------------------------
 # WIDE — 13 leaves, most of them tied to one master line. Stresses the tree
 # depth of the generated `withparams` and of the fused broadcast in `render`.
 # ---------------------------------------------------------------------------
@@ -181,6 +133,7 @@ end
 const L_HD = 4101.73
 const L_HG = 4340.47
 const L_HEII = 4685.68
+const L_HEI = 5875.62
 const L_HB = 4861.33
 const L_OIII_B = 4958.91
 const L_OIII_R = 5006.84
@@ -261,7 +214,7 @@ let truth = wide_model(norm = 3.1, index = -1.6, ha_amp = 10.5, sigma = 4.3)
     y_true = render(truth, WIDE_X)
     err = 0.055 .+ 0.018 .* sqrt.(clamp.(y_true, 0.0, Inf))
     y = y_true .+ err .* randn(RNG, length(WIDE_X))
-    global const WIDE = _case(wide_model(), (WIDE_X,), y, err, similar(y))
+    global const WIDE = _case(wide_model(), WIDE_X, y, err, similar(y))
 end
 
 # ---------------------------------------------------------------------------
@@ -314,27 +267,20 @@ end
 
 const NPIX = 100
 const IMG_COORD = range(-8.0, 8.0; length = NPIX)
-# Two coordinate forms, both legal and NOT equally cheap (ADR-0006):
-#   materialized — a full X and Y matrix per pixel, as examples/main writes it
-#   grid form    — a column against a row, broadcast on the fly, no coord memory
-const IMG_X = [x for x in IMG_COORD, _ in IMG_COORD]
-const IMG_Y = [y for _ in IMG_COORD, y in IMG_COORD]
-const IMG_XG = collect(IMG_COORD)
-const IMG_YG = reshape(collect(IMG_COORD), 1, :)
+# Physical axes: the lazy product of two axis vectors, no per-pixel coordinate memory.
+const IMG_AXIS = collect(IMG_COORD)
+const IMG_PTS = Coords(IMG_AXIS, IMG_AXIS)
 
 let truth = img_model(
         a1 = 25.0, x1 = -2.0, y1 = -1.0, s1 = 0.8, r1 = 2.5, n1 = 1.0, q1 = 0.38, t1 = 0.8,
         a2 = 90.0, x2 = 3.0, y2 = 1.5, s2 = 1.4, r2 = 1.6, n2 = 3.5, q2 = 0.85, t2 = -0.5,
         ad1 = 50.0, ad2 = 15.0
     )
-    img_true = render(truth, IMG_X, IMG_Y)
-    err = fill(0.4, size(IMG_X))
-    img = img_true .+ err .* randn(RNG, size(IMG_X))
-    global const IMG = _case(img_model(), (IMG_X, IMG_Y), img, err, similar(img))
+    img_true = render(truth, IMG_PTS)
+    err = fill(0.4, size(IMG_PTS))
+    img = img_true .+ err .* randn(RNG, size(IMG_PTS))
+    global const IMG = _case(img_model(), IMG_PTS, img, err, similar(img))
 end
-
-# Same scene rendered through the grid form — the shape a kernel would need.
-const IMG_GRID_F = ObjectiveFunction(img_model(), (IMG_XG, IMG_YG), IMG.y, IMG.err)
 
 # Handwritten baseline for the 2D render: the IMG scene with its ties resolved,
 # written as one fused broadcast. Same 20 free parameters, same order.
@@ -386,4 +332,4 @@ const POST = let cm = spec_prior_model()
     (; cm, f, p, cfg = fullchunk(f, p), g = zeros(length(p)))
 end
 
-const CASES = (; SPEC, NAD, WIDE, IMG)
+const CASES = (; SPEC, WIDE, IMG)

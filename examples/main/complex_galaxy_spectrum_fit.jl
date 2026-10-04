@@ -26,23 +26,23 @@ const L_SII_B = 6716.44
 const L_SII_R = 6730.82
 const L_REF = 5500.0
 
-Base.@kwdef struct RedshiftAxis1D{T <: Real} <: AbstractModel
+Base.@kwdef struct RedshiftAxis1D{T <: Real} <: AbstractModel{1, 1}
     z::T = 0.0
 end
 
-AstroFit.render(m::RedshiftAxis1D, lambda::Number) = lambda / (1 + m.z)
+AstroFit.evaluate(m::RedshiftAxis1D, lambda::Number) = lambda / (1 + m.z)
 
-Base.@kwdef struct DustScreen1D{A, B, C} <: AbstractModel
+Base.@kwdef struct DustScreen1D{A <: Real, B <: Real, C <: Real} <: AbstractModel{1, 1}
     a_v::A = 0.0
     lambda_ref::B = L_REF
     slope::C = 1.0
 end
 
 # Multiplicative dust screen: power-law attenuation, stronger in the blue.
-AstroFit.render(m::DustScreen1D, lambda::Number) =
+AstroFit.evaluate(m::DustScreen1D, lambda::Number) =
     exp(-m.a_v * (lambda / m.lambda_ref)^(-m.slope))
 
-Base.@kwdef struct BalmerBreak1D{J <: Real, W <: Real, L <: Real} <: AbstractModel
+Base.@kwdef struct BalmerBreak1D{J <: Real, W <: Real, L <: Real} <: AbstractModel{1, 1}
     jump::J = 0.5
     width::W = 25.0
     lambda_break::L = L_BREAK
@@ -50,7 +50,7 @@ end
 
 # Smooth step: 1 redward of the break, `jump` blueward, blended over `width`.
 # Applied to the stellar continuum only -- the AGN power law has no break.
-AstroFit.render(m::BalmerBreak1D, lambda::Number) =
+AstroFit.evaluate(m::BalmerBreak1D, lambda::Number) =
     m.jump + (1 - m.jump) / (1 + exp(-(lambda - m.lambda_break) / m.width))
 
 function galaxy_spectrum_model(;
@@ -426,7 +426,7 @@ lines!(ax, lambda_plot, parts.continuum .+ parts.balmer; color = :crimson, linew
 lines!(ax, lambda_plot, parts.continuum .+ parts.broad_balmer; color = :purple3, linewidth = 1.7, label = "broad AGN Balmer")
 lines!(ax, lambda_plot, parts.continuum .+ parts.forbidden; color = :dodgerblue3, linewidth = 1.5, label = "forbidden lines")
 lines!(ax, lambda_plot, parts.continuum .+ parts.helium; color = :seagreen, linewidth = 1.5, label = "He I/II")
-lines!(ax, lambda_plot, parts.continuum .+ parts.absorption; color = :darkorange3, linewidth = 1.5, label = "Na D absorption")
+lines!(ax, lambda_plot, parts.continuum .+ parts.absorption; color = :darkorange3, linewidth = 1.5, label = "Ca H&K + Na D absorption")
 
 blue_lo = (L_CAK - 60.0) * (1 + parts.z)
 blue_hi = (L_HB + 70.0) * (1 + parts.z)

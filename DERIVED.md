@@ -1,5 +1,7 @@
 # Piano: Derived Quantities
 
+> Scritto prima di ADR-0008: i riferimenti a `evalstyle`, `Pointwise`/`Domainwise` e `render!` sono superati (ora gli autori implementano `evaluate` e `render` è il broadcast controllato).
+
 Stato: proposta, non implementata.
 Scope di questo documento: **solo la creazione** delle quantità derivate (tipo, macro,
 storage, valutazione, validazione). Integrazione con catene MCMC e ottimizzatore è

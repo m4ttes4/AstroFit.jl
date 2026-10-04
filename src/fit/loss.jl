@@ -1,139 +1,23 @@
-_coords(x::Tuple) = x
-_coords(x) = (x,)
-
+import StatsAPI: loglikelihood
 
 """
-    chi2(model, coords, y, err)
-    chi2(f::ObjectiveFunction, p)
-
-Compute the χ² statistic (sum of squared residuals, optionally weighted by `1/err²`).
-
-The two-argument form substitutes parameters `p` into the objective's compiled model
-before evaluating.
-
-Pointwise models take a scalar loop that never materializes the prediction;
-domainwise models (including [`AbstractKernel`](@ref)) cannot be evaluated one
-point at a time, so they render once over the whole coordinate array. The split
-is by [`evalstyle`](@ref) and folds at compile time.
-
-See also: [`loglikelihood`](@ref), [`ObjectiveFunction`](@ref)
-"""
-chi2(model, coords, y, err) = _chi2(evalstyle(model), model, coords, y, err)
-
-@inline _chi2(::Pointwise, model, coords, y, err) = _chi2p(model, coords, y, err)
-@inline _chi2(::Domainwise, model, coords, y, err) = _chi2array(model, coords, y, err)
-
-# Shared lazy reduction: only domainwise consumers force intermediate arrays.
-# Arithmetic and pointwise consumers above them remain fused with the residual.
-function _chi2array(model, coords, y, ::Nothing)
-    μ = _eval(model, coords...)
-    _checkpred(μ, y)
-    return sum(i -> abs2(μ[i] - y[i]), eachindex(y))
-end
-
-function _chi2array(model, coords, y, err)
-    μ = _eval(model, coords...)
-    _checkpred(μ, y)
-    return sum(i -> abs2((μ[i] - y[i]) / err[i]), eachindex(y))
-end
-
-# Kernel outputs are checked at their producer. This separate check ensures the
-# complete prediction (including ordinary array-native models) matches the data.
-function _checkpred(μ, y)
-    axes(μ) == axes(y) || throw(
-        DimensionMismatch(
-            "model prediction axes $(axes(μ)) do not match data axes $(axes(y))"
-        )
-    )
-    return nothing
-end
-
-# `_eval` (render.jl) is the same lazy `Broadcasted` that `render`/`render!` build,
-# reused here instead of indexing one coordinate array at a time: a single loop
-# then serves both coordinate forms — a flat list of co-shaped points, and the
-# grid form (a column `x` against a row `y`) that a kernel needs. Nothing is
-# materialized: `μ[i]` evaluates `render` at that point.
-@inline _chi2p(model, coords, y, err) = _chi2array(model, coords, y, err)
-
-# 1D fast path — direct indexing, no map/splat
-function _chi2p(model, coords::Tuple{AbstractVector}, y, ::Nothing)
-    x = coords[1]
-    fi = firstindex(y)
-    acc = @inbounds abs2(render(model, x[fi]) - y[fi])
-    @inbounds for i in (fi + 1):lastindex(y)
-        acc += abs2(render(model, x[i]) - y[i])
-    end
-    return acc
-end
-
-function _chi2p(model, coords::Tuple{AbstractVector}, y, err)
-    x = coords[1]
-    fi = firstindex(y)
-    r = @inbounds render(model, x[fi]) - y[fi]
-    acc = abs2(r / @inbounds err[fi])
-    @inbounds for i in (fi + 1):lastindex(y)
-        r = render(model, x[i]) - y[i]
-        acc += abs2(r / err[i])
-    end
-    return acc
-end
-
-# One rule covers both coordinate forms: the coordinates must broadcast to
-# exactly the shape of `y`. That admits the flat point list (co-shaped arrays)
-# and the grid form (one axis per dimension — a column `x` against a row `y`),
-# and it rejects two plain vectors against an image, which would otherwise render
-# the diagonal instead of the image.
-function _checkcoords(coords, y)
-    shape = try
-        Base.Broadcast.broadcast_shape(map(axes, coords)...)
-    catch
-        nothing                       # incompatible axes: report it as our own error
-    end
-    shape == axes(y) || throw(
-        ArgumentError(
-            "coordinates must broadcast to the shape of `y`: got sizes $(map(size, coords)) against $(size(y))"
-        )
-    )
-    return nothing
-end
-
-"""
-    check_data(x, y, err)
-
-Validate that the coordinates broadcast to the shape of `y`, that `err` (if
-provided) matches `y` in length, and that all `err` values are positive. Throws
-`ArgumentError` on failure.
-
-Coordinates may be given either as a flat point list (every coordinate array
-co-shaped with `y`) or in grid form (one axis per dimension, shaped so they
-broadcast — a column `x` against a row `y`). The grid form is what a model
-containing an [`AbstractKernel`](@ref) needs, since a kernel is handed the whole
-image.
-"""
-function check_data(x, y, err)
-    _checkcoords(_coords(x), y)
-    err === nothing && return nothing
-    length(y) == length(err) || throw(
-        ArgumentError(
-            "`y` and `err` must have the same length"
-        )
-    )
-    all(>(0), err) || throw(ArgumentError("all `err` values must be positive"))
-    return nothing
-end
-
-"""
-    ObjectiveFunction(cm::CompiledModel, x, y, [err]; statistic=chi2)
+    ObjectiveFunction(cm::CompiledModel, points, y, [err]; statistic=chi2)
 
 Callable objective wrapping a [`CompiledModel`](@ref), data, and optional errors.
 
 Calling `f(p)` calls `statistic(f, p)`. Supports `f(p, _)` for the two-argument
 convention used by Optimization.jl.
 
+The inputs are validated once, here: `points` follows [`render`](@ref)'s rules (a
+vector for 1D, `CartesianIndices(img)`, `Coords(x, y, …)`, any array of points),
+`axes(points) == axes(y)`, and `err` (if given) matches `y` and is positive. The
+model must produce one value per point. A masked fit is a mask on the points:
+`ObjectiveFunction(cm, CartesianIndices(img)[mask], img[mask])`.
+
 # Arguments
 - `cm::CompiledModel`: the compiled model to evaluate
-- `x`: coordinate data (single vector for 1D, tuple of vectors for multi-D)
-- `y`: observed data values
+- `points`: the array of points the data were taken at
+- `y`: observed data values, one per point
 - `err`: optional per-point errors (standard deviations)
 
 # Keywords
@@ -145,25 +29,25 @@ convention used by Optimization.jl.
 
 # Examples
 ```julia
-f = ObjectiveFunction(cm, x, y, err)
+f = ObjectiveFunction(cm, λ, flux, err)
 f(p)                     # χ² at parameter vector p
-f = ObjectiveFunction(cm, x, y, err; statistic=neglogposterior)
+f = ObjectiveFunction(cm, λ, flux, err; statistic=neglogposterior)
 f(p)                     # -log posterior at p
 
 # custom likelihood, e.g. Poisson counts
 poisson_ll(f, p) = begin
     m = withparams(f.cm, p)
-    sum(i -> logpdf(Poisson(render(m, f.coords[1][i])), f.y[i]), eachindex(f.y))
+    sum(i -> logpdf(Poisson(render(m, f.points[i])), f.y[i]), eachindex(f.y))
 end
-f = ObjectiveFunction(cm, x, y; statistic=poisson_ll)
+f = ObjectiveFunction(cm, t, counts; statistic=poisson_ll)
 f(p)                     # poisson_ll(f, p)
 ```
 
 See also: [`chi2`](@ref), [`loglikelihood`](@ref), [`logposterior`](@ref)
 """
-struct ObjectiveFunction{CM, C, Y, E, S, PR}
+struct ObjectiveFunction{CM, P, Y, E, S, PR}
     cm::CM
-    coords::C
+    points::P
     y::Y
     err::E
     lower::Vector{Float64}
@@ -175,8 +59,20 @@ struct ObjectiveFunction{CM, C, Y, E, S, PR}
     priors::PR
 end
 
-function ObjectiveFunction(cm::CompiledModel, x, y, err = nothing; statistic = chi2)
-    check_data(x, y, err)
+function ObjectiveFunction(
+        cm::CompiledModel{<:AbstractModel{<:Any, 1}}, points::AbstractArray, y::AbstractArray, err = nothing;
+        statistic = chi2
+    )
+    isempty(y) && throw(ArgumentError("ObjectiveFunction needs at least one data point"))
+    axes(points) == axes(y) ||
+        throw(DimensionMismatch("point axes $(axes(points)) do not match data axes $(axes(y))"))
+    # render's rules on a one-point view: same method, same error, constant memory.
+    render(cm, view(points, map(a -> first(a):first(a), axes(points))...))
+    if err !== nothing
+        axes(err) == axes(y) ||
+            throw(DimensionMismatch("err axes $(axes(err)) do not match data axes $(axes(y))"))
+        all(>(0), err) || throw(ArgumentError("all `err` values must be positive"))
+    end
     lower, upper = bounds(cm)
     n = length(y)
     llc = err === nothing ?
@@ -185,7 +81,7 @@ function ObjectiveFunction(cm::CompiledModel, x, y, err = nothing; statistic = c
     names = paramnames(cm)
     return ObjectiveFunction(
         cm,
-        _coords(x),
+        points,
         y,
         err,
         Float64.(lower),
@@ -197,11 +93,37 @@ function ObjectiveFunction(cm::CompiledModel, x, y, err = nothing; statistic = c
         _resolve_priors(cm, names),
     )
 end
+ObjectiveFunction(cm::CompiledModel{<:AbstractModel{<:Any, 1}}, points, y, err = nothing; kwargs...) =
+    throw(ArgumentError("ObjectiveFunction takes an array of points and an array of data, got $(typeof(points)) and $(typeof(y))"))
+ObjectiveFunction(cm::CompiledModel{<:AbstractModel{I, O}}, points, y, err = nothing; kwargs...) where {I, O} =
+    throw(ArgumentError("a fit needs one value per point; this model produces $O"))
 
 (f::ObjectiveFunction)(p) = f.statistic(f, p)
 (f::ObjectiveFunction)(p, _) = f(p) # Optimization.jl convention
 
-@inline chi2(f::ObjectiveFunction, p) = chi2(withparams(f.cm, p), f.coords, f.y, f.err)
+"""
+    chi2(f::ObjectiveFunction, p)
+
+The χ² statistic at parameter vector `p`: the sum of squared residuals, weighted by
+`1/err²` when the objective has errors. The prediction is never materialized.
+
+See also: [`loglikelihood`](@ref), [`ObjectiveFunction`](@ref)
+"""
+function chi2(f::ObjectiveFunction, p)
+    m, A, y, err = withparams(f.cm, p), f.points, f.y, f.err
+    Is = CartesianIndices(axes(y))
+    I1 = first(Is)
+    r1 = render(m, A[I1]) - y[I1]
+    # The accumulator takes the first term's type (a Dual under ForwardDiff), so it
+    # stays concrete through the loop; this is why empty data is rejected.
+    s = zero(abs2(err === nothing ? r1 : r1 / err[I1]))
+    # @inbounds is sound: the constructor checked the axes and the fields are immutable.
+    @inbounds for I in Is
+        r = render(m, A[I]) - y[I]
+        s += abs2(err === nothing ? r : r / err[I])
+    end
+    return s
+end
 
 """
     loglikelihood(f::ObjectiveFunction, p) -> Float64
@@ -211,7 +133,7 @@ Compute the Gaussian log-likelihood at parameter vector `p`: `-0.5 * χ² + cons
 See also: [`chi2`](@ref), [`logposterior`](@ref)
 """
 @inline loglikelihood(f::ObjectiveFunction, p) = -0.5 * chi2(f, p) + f._loglike_const
-# is it necessary to save the logconstant?
+
 """
     negloglikelihood(f::ObjectiveFunction, p) -> Float64
 
@@ -222,7 +144,7 @@ negloglikelihood(f::ObjectiveFunction, p) = -loglikelihood(f, p)
 """
     logposterior(f::ObjectiveFunction, p) -> Float64
 
-Compute the log-posterior: `logprior(cm, p) + loglikelihood(f, p)`.
+Compute the log-posterior: `logprior(f, p) + loglikelihood(f, p)`.
 
 `Bounded` parameters are not automatically rejected outside their bounds —
 attach an explicit `@prior leaf.field ~ Uniform(lower, upper)` (or a

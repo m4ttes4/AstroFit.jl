@@ -1,13 +1,9 @@
 # --- 2D model library ---
 #
-# The `render!` methods here broadcast over hoisted constants rather than running
-# a linear `eachindex(out, xs, ys)` loop. Broadcast is what lets the same method
-# serve both coordinate forms — a co-shaped point list AND the grid form (a column
-# `xs` against a row `ys`) that produces the image a kernel is handed — while the
-# hoisting keeps the trig and the divisions out of the inner loop. Measured within
-# 10% of the linear loop, still zero-allocation. The constants go through as
-# broadcast arguments and NOT as a captured closure: the closure form measured
-# 1.3x, the arguments form 1.1x. See ADR-0006.
+# Every model keeps its parameter-only constants (the rotation, the reciprocals) in
+# `_cache_`, computed once by its positional constructor, so `evaluate` does only
+# the per-point work. The evaluates are `@inline`: without it the image broadcast
+# calls them per pixel and measured 1.25x slower (Gaussian2D, 256²).
 #
 # All four models start from the same rotated, flattened radius, so it lives in
 # one helper; each model differs only in the profile applied to it.
@@ -18,130 +14,159 @@
     return xr^2 + yr^2 * inv_q2
 end
 
-Base.@kwdef struct Gaussian2D{
-        T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real,
-    } <: AbstractModel
-    amplitude::T1 = 1.0
-    x0::T2 = 0.0
-    y0::T3 = 0.0
-    sigma::T4 = 1.0
-    q::T5 = 1.0
-    theta::T6 = 0.0
-end
+"""
+    Gaussian2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, sigma = 1.0, q = 1.0, theta = 0.0)
 
-function render(m::Gaussian2D, x::Number, y::Number)
-    dx, dy = x - m.x0, y - m.y0
-    cost, sint = cos(m.theta), sin(m.theta)
-    xr = cost * dx + sint * dy
-    yr = -sint * dx + cost * dy
-    return m.amplitude * exp(-0.5 * (xr^2 + (yr / m.q)^2) / m.sigma^2)
+A `2 => 1` elliptical Gaussian: `amplitude * exp(-r^2 / (2 * sigma^2))`.
+`r` is the elliptical radius around `(x0, y0)`, with the major axis at angle
+`theta` from the x axis and axis ratio `q`.
+"""
+struct Gaussian2D{
+        T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, C,
+    } <: AbstractModel{2, 1}
+    amplitude::T1
+    x0::T2
+    y0::T3
+    sigma::T4
+    q::T5
+    theta::T6
+    _cache_::C
+    function Gaussian2D(
+            amplitude::T1, x0::T2, y0::T3, sigma::T4, q::T5, theta::T6,
+        ) where {T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real}
+        sint, cost = sincos(theta)
+        c = (cost = cost, sint = sint, inv_q2 = 1 / q^2, inv_s2 = 1 / sigma^2)
+        return new{T1, T2, T3, T4, T5, T6, typeof(c)}(amplitude, x0, y0, sigma, q, theta, c)
+    end
 end
+Gaussian2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, sigma = 1.0, q = 1.0, theta = 0.0) =
+    Gaussian2D(amplitude, x0, y0, sigma, q, theta)
 
-function render!(out::AbstractArray, m::Gaussian2D, xs::AbstractArray, ys::AbstractArray)
-    _checkrendercoords(out, xs, ys)
-    cost, sint = cos(m.theta), sin(m.theta)
-    inv_s2 = 1 / m.sigma^2
-    inv_q2 = 1 / m.q^2
-    # One fused expression on purpose: naming the `_rot2d` result would
-    # materialize an intermediate array and cost the zero-allocation guarantee.
-    out .= m.amplitude .* exp.(-0.5 .* _rot2d.(xs, ys, m.x0, m.y0, cost, sint, inv_q2) .* inv_s2)
-    return out
+@inline function evaluate(m::Gaussian2D, (x, y)::NTuple{2, Number})
+    (; cost, sint, inv_q2, inv_s2) = m._cache_
+    return m.amplitude * exp(-0.5 * _rot2d(x, y, m.x0, m.y0, cost, sint, inv_q2) * inv_s2)
 end
 
 
 # ponytail: b_n via Ciotti & Bertin 1999 approximation, SpecialFunctions.jl if sub-percent needed
-Base.@kwdef struct Sersic2D{
-        T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, T7 <: Real,
-    } <: AbstractModel
-    amplitude::T1 = 1.0
-    x0::T2 = 0.0
-    y0::T3 = 0.0
-    r_eff::T4 = 1.0
-    n::T5 = 1.0
-    q::T6 = 1.0
-    theta::T7 = 0.0
+"""
+    Sersic2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, r_eff = 1.0, n = 1.0, q = 1.0, theta = 0.0)
+
+A `2 => 1` Sérsic profile: `amplitude * exp(-b_n * ((r / r_eff)^(1 / n) - 1))`, with
+`b_n ≈ 2n - 1/3 + 4/(405n)`, so `amplitude` is the value at `r_eff`.
+`r` is the elliptical radius around `(x0, y0)`, with the major axis at angle
+`theta` from the x axis and axis ratio `q`.
+"""
+struct Sersic2D{
+        T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, T7 <: Real, C,
+    } <: AbstractModel{2, 1}
+    amplitude::T1
+    x0::T2
+    y0::T3
+    r_eff::T4
+    n::T5
+    q::T6
+    theta::T7
+    _cache_::C
+    function Sersic2D(
+            amplitude::T1, x0::T2, y0::T3, r_eff::T4, n::T5, q::T6, theta::T7,
+        ) where {T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, T7 <: Real}
+        sint, cost = sincos(theta)
+        c = (
+            bn = 2 * n - 1 / 3 + 4 / (405 * n), inv_n = 1 / n, inv_r = 1 / r_eff,
+            cost = cost, sint = sint, inv_q2 = 1 / q^2,
+        )
+        return new{T1, T2, T3, T4, T5, T6, T7, typeof(c)}(amplitude, x0, y0, r_eff, n, q, theta, c)
+    end
 end
+Sersic2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, r_eff = 1.0, n = 1.0, q = 1.0, theta = 0.0) =
+    Sersic2D(amplitude, x0, y0, r_eff, n, q, theta)
 
-function render(m::Sersic2D, x::Number, y::Number)
-    bn = 2 * m.n - 1 / 3 + 4 / (405 * m.n)
-    dx, dy = x - m.x0, y - m.y0
-    cost, sint = cos(m.theta), sin(m.theta)
-    xr = cost * dx + sint * dy
-    yr = -sint * dx + cost * dy
-    r = sqrt(xr^2 + (yr / m.q)^2)
-    return m.amplitude * exp(-bn * ((r / m.r_eff)^(1 / m.n) - 1))
-end
-
-function render!(out::AbstractArray, m::Sersic2D, xs::AbstractArray, ys::AbstractArray)
-    _checkrendercoords(out, xs, ys)
-    bn = 2 * m.n - 1 / 3 + 4 / (405 * m.n)
-    inv_n = 1 / m.n
-    inv_r = 1 / m.r_eff
-    cost, sint = cos(m.theta), sin(m.theta)
-    inv_q2 = 1 / m.q^2
-    out .= m.amplitude .*
-        exp.(-bn .* ((sqrt.(_rot2d.(xs, ys, m.x0, m.y0, cost, sint, inv_q2)) .* inv_r) .^ inv_n .- 1))
-    return out
-end
-
-
-Base.@kwdef struct Moffat2D{
-        T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, T7 <: Real,
-    } <: AbstractModel
-    amplitude::T1 = 1.0
-    x0::T2 = 0.0
-    y0::T3 = 0.0
-    alpha::T4 = 1.0
-    beta::T5 = 1.0
-    q::T6 = 1.0
-    theta::T7 = 0.0
-end
-
-function render(m::Moffat2D, x::Number, y::Number)
-    dx, dy = x - m.x0, y - m.y0
-    cost, sint = cos(m.theta), sin(m.theta)
-    xr = cost * dx + sint * dy
-    yr = -sint * dx + cost * dy
-    return m.amplitude * (1 + (xr^2 + (yr / m.q)^2) / m.alpha^2)^(-m.beta)
-end
-
-function render!(out::AbstractArray, m::Moffat2D, xs::AbstractArray, ys::AbstractArray)
-    _checkrendercoords(out, xs, ys)
-    inv_a2 = 1 / m.alpha^2
-    nbeta = -m.beta
-    cost, sint = cos(m.theta), sin(m.theta)
-    inv_q2 = 1 / m.q^2
-    out .= m.amplitude .* (1 .+ _rot2d.(xs, ys, m.x0, m.y0, cost, sint, inv_q2) .* inv_a2) .^ nbeta
-    return out
+@inline function evaluate(m::Sersic2D, (x, y)::NTuple{2, Number})
+    (; bn, inv_n, inv_r, cost, sint, inv_q2) = m._cache_
+    r = sqrt(_rot2d(x, y, m.x0, m.y0, cost, sint, inv_q2))
+    return m.amplitude * exp(-bn * ((r * inv_r)^inv_n - 1))
 end
 
 
-Base.@kwdef struct Beta2D{
-        T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, T7 <: Real,
-    } <: AbstractModel
-    amplitude::T1 = 1.0
-    x0::T2 = 0.0
-    y0::T3 = 0.0
-    r_core::T4 = 1.0
-    beta::T5 = 0.67
-    q::T6 = 1.0
-    theta::T7 = 0.0
+"""
+    Moffat2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, alpha = 1.0, beta = 1.0, q = 1.0, theta = 0.0)
+
+A `2 => 1` Moffat profile: `amplitude * (1 + (r / alpha)^2)^(-beta)`.
+`r` is the elliptical radius around `(x0, y0)`, with the major axis at angle
+`theta` from the x axis and axis ratio `q`.
+"""
+struct Moffat2D{
+        T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, T7 <: Real, C,
+    } <: AbstractModel{2, 1}
+    amplitude::T1
+    x0::T2
+    y0::T3
+    alpha::T4
+    beta::T5
+    q::T6
+    theta::T7
+    _cache_::C
+    function Moffat2D(
+            amplitude::T1, x0::T2, y0::T3, alpha::T4, beta::T5, q::T6, theta::T7,
+        ) where {T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, T7 <: Real}
+        sint, cost = sincos(theta)
+        c = (inv_a2 = 1 / alpha^2, nbeta = -beta, cost = cost, sint = sint, inv_q2 = 1 / q^2)
+        return new{T1, T2, T3, T4, T5, T6, T7, typeof(c)}(amplitude, x0, y0, alpha, beta, q, theta, c)
+    end
+end
+Moffat2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, alpha = 1.0, beta = 1.0, q = 1.0, theta = 0.0) =
+    Moffat2D(amplitude, x0, y0, alpha, beta, q, theta)
+
+@inline function evaluate(m::Moffat2D, (x, y)::NTuple{2, Number})
+    (; inv_a2, nbeta, cost, sint, inv_q2) = m._cache_
+    return m.amplitude * (1 + _rot2d(x, y, m.x0, m.y0, cost, sint, inv_q2) * inv_a2)^nbeta
 end
 
-function render(m::Beta2D, x::Number, y::Number)
-    dx, dy = x - m.x0, y - m.y0
-    cost, sint = cos(m.theta), sin(m.theta)
-    xr = cost * dx + sint * dy
-    yr = -sint * dx + cost * dy
-    return m.amplitude * (1 + (xr^2 + (yr / m.q)^2) / m.r_core^2)^(-3 * m.beta + 0.5)
+
+"""
+    Beta2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, r_core = 1.0, beta = 0.67, q = 1.0, theta = 0.0)
+
+A `2 => 1` beta model (e.g. cluster X-ray emission):
+`amplitude * (1 + (r / r_core)^2)^(-3beta + 1/2)`.
+`r` is the elliptical radius around `(x0, y0)`, with the major axis at angle
+`theta` from the x axis and axis ratio `q`.
+"""
+struct Beta2D{
+        T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, T7 <: Real, C,
+    } <: AbstractModel{2, 1}
+    amplitude::T1
+    x0::T2
+    y0::T3
+    r_core::T4
+    beta::T5
+    q::T6
+    theta::T7
+    _cache_::C
+    function Beta2D(
+            amplitude::T1, x0::T2, y0::T3, r_core::T4, beta::T5, q::T6, theta::T7,
+        ) where {T1 <: Real, T2 <: Real, T3 <: Real, T4 <: Real, T5 <: Real, T6 <: Real, T7 <: Real}
+        sint, cost = sincos(theta)
+        c = (inv_rc2 = 1 / r_core^2, exp_val = -3 * beta + 0.5, cost = cost, sint = sint, inv_q2 = 1 / q^2)
+        return new{T1, T2, T3, T4, T5, T6, T7, typeof(c)}(amplitude, x0, y0, r_core, beta, q, theta, c)
+    end
+end
+Beta2D(; amplitude = 1.0, x0 = 0.0, y0 = 0.0, r_core = 1.0, beta = 0.67, q = 1.0, theta = 0.0) =
+    Beta2D(amplitude, x0, y0, r_core, beta, q, theta)
+
+@inline function evaluate(m::Beta2D, (x, y)::NTuple{2, Number})
+    (; inv_rc2, exp_val, cost, sint, inv_q2) = m._cache_
+    return m.amplitude * (1 + _rot2d(x, y, m.x0, m.y0, cost, sint, inv_q2) * inv_rc2)^exp_val
 end
 
-function render!(out::AbstractArray, m::Beta2D, xs::AbstractArray, ys::AbstractArray)
-    _checkrendercoords(out, xs, ys)
-    inv_rc2 = 1 / m.r_core^2
-    exp_val = -3 * m.beta + 0.5
-    cost, sint = cos(m.theta), sin(m.theta)
-    inv_q2 = 1 / m.q^2
-    out .= m.amplitude .* (1 .+ _rot2d.(xs, ys, m.x0, m.y0, cost, sint, inv_q2) .* inv_rc2) .^ exp_val
-    return out
+
+"""
+    Const2D(; value = 0.0)
+
+A `2 => 1` constant: `value` at every point, e.g. a flat sky background.
+"""
+Base.@kwdef struct Const2D{T <: Real} <: AbstractModel{2, 1}
+    value::T = 0.0
 end
+
+evaluate(m::Const2D, ::NTuple{2, Number}) = m.value

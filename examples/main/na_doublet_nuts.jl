@@ -1,20 +1,18 @@
 # Bayesian version of na_doublet_fit.jl: the Na I D doublet + He I emission,
-# seen through a fixed instrumental PSF, with NUTS (AdvancedHMC.jl) instead of
-# the LBFGS point estimate. Same scene and the same physical ties — the depth
+# with NUTS (AdvancedHMC.jl) instead of the LBFGS point estimate. Same scene and the same physical ties — the depth
 # ratio, atomic separation, shared velocity/dispersion — now the posterior
-# gives credible intervals on the gas velocity and the intrinsic width.
+# gives credible intervals on the gas velocity and the line width.
 #
-# Prior rationale (all Truncated to their physical bound, since logposterior no
-# longer auto-rejects out-of-bounds points — the Truncated wall is what NUTS
-# feels):
-#   d2.amplitude → Normal, absorption only (negative)
+# Prior rationale (none is truncated: logposterior does not reject points outside
+# the bounds, so only the LogNormal priors keep their parameter on one side of 0):
+#   d2.amplitude → Normal centred on negative values (absorption), not truncated
 #   d2.mean      → Normal on the velocity window (drives the velocity posterior)
-#   d2.sigma     → LogNormal, strictly positive intrinsic width
+#   d2.sigma     → LogNormal, strictly positive line width
 #   hei.amplitude→ LogNormal, emission only (positive)
 #   hei.sigma    → LogNormal, own width
-#   cont.slope/intercept → Normal on ℝ (continuum is unbounded, no truncation)
+#   cont.intercept → Normal on ℝ; cont.slope is fixed at its starting value (0)
 #
-# Run with:  julia --project=examples/ examples/main/na_doublet_nuts.jl
+# Run with:  julia --project=examples examples/main/na_doublet_nuts.jl
 
 using AstroFit
 using Distributions
@@ -31,12 +29,9 @@ const L_NAD_D2 = 5889.95
 const L_NAD_D1 = 5895.92
 const C_KMS = 2.998e5
 
-const STEP = 0.1             # grid step [A/sample] — kernels work in samples
-const SIGMA_INST = 1.6       # instrumental resolution [A]: partially blends the doublet
-
 # ---------------------------------------------------------------------------
-# 1. True model — doublet at +45 km/s, ratio 2:1, intrinsic width 0.45 A,
-#    plus He I emission; the instrument smears every line to ~2.25 A
+# 1. True model — doublet at +45 km/s, ratio 2:1, width 0.45 A,
+#    plus He I emission
 # ---------------------------------------------------------------------------
 v_true = 45.0
 shift = L_NAD_D2 * v_true / C_KMS
@@ -47,15 +42,14 @@ true_model = @model begin
     d2 = Gaussian1D(amplitude = -0.85, mean = L_NAD_D2 + shift, sigma = sigma_true)
     d1 = Gaussian1D(amplitude = -0.425, mean = L_NAD_D1 + shift, sigma = sigma_true)
     hei = Gaussian1D(amplitude = 0.55, mean = L_HEI + shift, sigma = 0.9)
-    psf = GaussianPSF(sigma = SIGMA_INST / STEP)
-    (cont + d2 + d1 + hei) |> psf
+    cont + d2 + d1 + hei
 end
 
 # ---------------------------------------------------------------------------
 # 2. Synthetic data
 # ---------------------------------------------------------------------------
 Random.seed!(123)
-λ = collect(5860.0:STEP:5925.0)
+λ = collect(5860.0:0.1:5925.0)
 σ_noise = 0.02
 y_true = render(true_model, λ)
 y = y_true .+ σ_noise .* randn(length(λ))
@@ -69,11 +63,10 @@ cm = @model begin
     d2 = Gaussian1D(amplitude = -0.4, mean = L_NAD_D2, sigma = 0.8)
     d1 = Gaussian1D(amplitude = -0.2, mean = L_NAD_D1, sigma = 0.8)
     hei = Gaussian1D(amplitude = 0.3, mean = L_HEI, sigma = 1.2)
-    psf = GaussianPSF(sigma = SIGMA_INST / STEP)
-    (cont + d2 + d1 + hei) |> psf
+    cont + d2 + d1 + hei
 end
 
-# Same bounds/ties/fixes as the MAP example, now with a prior on every free
+# Same bounds and ties as the MAP example, plus cont.slope fixed, now with a prior on every free
 # parameter — Bayesian inference needs one per free parameter (the continuum
 # included). Priors sit in the same @constrain block as the constraints.
 @constrain cm begin
@@ -89,7 +82,6 @@ end
     d1.mean -> d2.mean + (L_NAD_D1 - L_NAD_D2)     # atomic separation
     d1.sigma -> d2.sigma                           # same gas
     hei.mean -> d2.mean + (L_HEI - L_NAD_D2)       # same systemic velocity
-    psf.sigma                                      # known calibration, fixed
     cont.slope 
     # --- priors ---
     # continuum lives on ℝ: near the data the level is ~1, but slope and
@@ -135,7 +127,7 @@ chain = AbstractMCMC.sample(
 )
 
 # ---------------------------------------------------------------------------
-# 6. Diagnostics — velocity and intrinsic width as posterior credible intervals
+# 6. Diagnostics — velocity and line width as posterior credible intervals
 # ---------------------------------------------------------------------------
 println("\n", chain)
 
@@ -154,7 +146,7 @@ println()
 println("gas velocity   : ", round(vq[2]; digits = 1), " km/s  (+",
     round(vq[3] - vq[2]; digits = 1), " / -", round(vq[2] - vq[1]; digits = 1),
     ")   truth: ", v_true)
-println("intrinsic sigma: ", round(sq[2]; digits = 3), " A     (+",
+println("line sigma     : ", round(sq[2]; digits = 3), " A     (+",
     round(sq[3] - sq[2]; digits = 3), " / -", round(sq[2] - sq[1]; digits = 3),
     ")   truth: ", sigma_true)
 println()
@@ -187,7 +179,7 @@ lines!(ax, λ, y_fit; color = :red, linewidth = 2, label = "posterior median")
 axislegend(ax; position = :rb)
 
 display(fig)
-save("examples/na_doublet_nuts_fit.png", fig; px_per_unit = 2)
+save(joinpath(@__DIR__, "na_doublet_nuts_fit.png"), fig; px_per_unit = 2)
 
 # ---------------------------------------------------------------------------
 # 8. Pair plot of the physically interesting parameters
@@ -197,7 +189,7 @@ true_vals = [L_NAD_D2 + shift, sigma_true, -0.85, 0.55]
 
 pp = pairplot(chain[phys_names], PairPlots.Truth(
     Dict(n => v for (n, v) in zip(phys_names, true_vals))))
-save("examples/na_doublet_nuts_pairs.png", pp; px_per_unit = 2)
+save(joinpath(@__DIR__, "na_doublet_nuts_pairs.png"), pp; px_per_unit = 2)
 
-println("saved → examples/na_doublet_nuts_fit.png")
-println("saved → examples/na_doublet_nuts_pairs.png")
+println("saved → ", joinpath(@__DIR__, "na_doublet_nuts_fit.png"))
+println("saved → ", joinpath(@__DIR__, "na_doublet_nuts_pairs.png"))
